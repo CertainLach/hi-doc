@@ -1,3 +1,5 @@
+//! Definitions of used formatting characters and how to act when they are overlapped during formatting
+
 pub mod line {
 	pub const CONTINUE: char = '─';
 	pub const CONTINUE_CROSS: char = '━';

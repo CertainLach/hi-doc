@@ -9,43 +9,23 @@ use rand::seq::SliceRandom;
 use range_map::RangeSet;
 
 use crate::{
+	annotation::{AnnotationId, Opts},
 	segment::{Segment, SegmentBuffer},
 	Formatting, Text,
 };
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
-pub struct AnnotationId(u32);
-pub struct AnnotationIdAllocator(u32);
-impl AnnotationIdAllocator {
-	pub fn new() -> Self {
-		Self(0)
-	}
-	pub fn next(&mut self) -> AnnotationId {
-		let id = self.0;
-		self.0 += 1;
-		AnnotationId(id)
-	}
-}
-
+/// This kind of annotations is not used directly, instead library creates those
 #[derive(Debug, Clone)]
 pub struct LineAnnotation {
 	pub id: AnnotationId,
 	pub priority: usize,
 	pub ranges: RangeSet<usize>,
 	pub formatting: Formatting,
+	/// Should this annotation have a line pointing to the left
+	/// This option is used to make places for interconnecting lines
 	pub left: bool,
-	pub right: Vec<Text>,
-}
-
-#[derive(Default)]
-pub struct Opts {
-	/// Debug option, disables prettying line sorting
-	pub ratnest_sort: bool,
-	/// Debug option, randomly disables range merging
-	pub ratnest_merge: bool,
-	/// For primary ranges, instead of creating line with range annotaions,
-	/// apply range colors directly to source string. Only useable with colors
-	pub first_layer_reformats_orig: bool,
+	/// What text to display to the right of annotated line
+	pub right: Text,
 }
 
 /// Distribute annotations per layers
@@ -254,7 +234,10 @@ pub fn generate_segment(
 				} else if !annotation.right.is_empty() && first {
 					ARROW_R
 				} else {
-					assert!(annotation.left || !annotation.right.is_empty());
+					assert!(
+						annotation.left || !annotation.right.is_empty(),
+						"no right or left text: {annotation:?}"
+					);
 					ARROW_RL
 				};
 				fmtlayer.splice(
@@ -289,9 +272,10 @@ pub fn generate_segment(
 						annotation.formatting.clone(),
 					)])),
 				);
-				fmtlayer.extend(textbuf(" "));
-				fmtlayer.extend(right[0].clone());
-				for right in right.iter().skip(1) {
+				fmtlayer.extend(Text::single([' '], Default::default()));
+				let lines = right.split('\n');
+				fmtlayer.extend(lines[0].clone());
+				for right in lines.iter().skip(1) {
 					let mut fmtlayer = SegmentBuffer::new([Segment::new(
 						vec![' '; max_size],
 						Formatting::default(),
@@ -354,10 +338,6 @@ pub fn generate_segment(
 	(text, out)
 }
 
-fn textbuf(str: &'static str) -> Text {
-	SegmentBuffer::new([Segment::new(str.chars(), Formatting::default())])
-}
-
 /*
 TODO: optimize lines to left after multi-line to right texts:
 |       ╰────┼────  Baz
@@ -368,67 +348,77 @@ TODO: optimize lines to left after multi-line to right texts:
 |   ─────────╯      Line2
 */
 
-#[test]
-fn single_line() {
-	use random_color::RandomColor;
-	fn gen_color(seed: u32) -> Formatting {
-		let [r, g, b] = RandomColor::new().seed(seed).to_rgb_array();
-		Formatting::color(u32::from_be_bytes([r, g, b, 0]))
+#[cfg(test)]
+mod tests {
+	use crate::annotation::AnnotationIdAllocator;
+
+	use super::*;
+
+	fn default<T: Default>() -> T {
+		Default::default()
 	}
-	use range_map::Range;
-	generate_segment(
-		vec![
-			LineAnnotation {
-				id: AnnotationId(0),
-				priority: 0,
-				ranges: vec![Range::new(3usize, 6), Range::new(8usize, 10)]
-					.into_iter()
-					.collect(),
-				formatting: gen_color(0),
-				left: true,
-				right: vec![textbuf("Foo")],
+
+	#[test]
+	fn single_line() {
+		use random_color::RandomColor;
+		fn gen_color(seed: u32) -> Formatting {
+			let [r, g, b] = RandomColor::new().seed(seed).to_rgb_array();
+			Formatting::color(u32::from_be_bytes([r, g, b, 0]))
+		}
+		use range_map::Range;
+
+		let mut aid = AnnotationIdAllocator::new();
+		generate_segment(
+			vec![
+				LineAnnotation {
+					id: aid.next(),
+					priority: 0,
+					ranges: vec![Range::new(3usize, 6), Range::new(8usize, 10)]
+						.into_iter()
+						.collect(),
+					formatting: gen_color(0),
+					left: true,
+					right: Text::single("Foo".chars(), default()),
+				},
+				LineAnnotation {
+					id: aid.next(),
+					priority: 0,
+					ranges: vec![Range::new(3usize, 10)].into_iter().collect(),
+					formatting: gen_color(1),
+					left: false,
+					right: Text::single("Bar".chars(), default()),
+				},
+				LineAnnotation {
+					id: aid.next(),
+					priority: 1,
+					ranges: vec![Range::new(7usize, 7)].into_iter().collect(),
+					formatting: gen_color(2),
+					left: false,
+					right: Text::single("Baz\nLine2".chars(), default()),
+				},
+				LineAnnotation {
+					id: aid.next(),
+					priority: 0,
+					ranges: vec![Range::new(12usize, 17)].into_iter().collect(),
+					formatting: gen_color(3),
+					left: true,
+					right: Text::empty(),
+				},
+				LineAnnotation {
+					id: aid.next(),
+					priority: 0,
+					ranges: vec![Range::new(11usize, 14)].into_iter().collect(),
+					formatting: gen_color(4),
+					left: false,
+					right: Text::single("FooBar".chars(), default()),
+				},
+			],
+			Text::single("012345678901234567890123456789012345".chars(), default()),
+			&Opts {
+				ratnest_sort: true,
+				ratnest_merge: true,
+				first_layer_reformats_orig: true,
 			},
-			LineAnnotation {
-				id: AnnotationId(1),
-				priority: 0,
-				ranges: vec![Range::new(3usize, 10)].into_iter().collect(),
-				formatting: gen_color(1),
-				left: false,
-				right: vec![textbuf("Bar")],
-			},
-			LineAnnotation {
-				id: AnnotationId(2),
-				priority: 1,
-				ranges: vec![Range::new(7usize, 7)].into_iter().collect(),
-				formatting: gen_color(2),
-				left: false,
-				right: vec![textbuf("Baz"), textbuf("Line2")],
-			},
-			LineAnnotation {
-				id: AnnotationId(3),
-				priority: 0,
-				ranges: vec![Range::new(12usize, 17)].into_iter().collect(),
-				formatting: gen_color(3),
-				left: true,
-				right: vec![],
-			},
-			LineAnnotation {
-				id: AnnotationId(4),
-				priority: 0,
-				ranges: vec![Range::new(11usize, 14)].into_iter().collect(),
-				formatting: gen_color(4),
-				left: false,
-				right: vec![textbuf("FooBar")],
-			},
-		],
-		SegmentBuffer::new([Segment::new(
-			"012345678901234567890123456789012345".chars(),
-			Formatting::default(),
-		)]),
-		&Opts {
-			ratnest_sort: true,
-			ratnest_merge: true,
-			first_layer_reformats_orig: true,
-		},
-	);
+		);
+	}
 }

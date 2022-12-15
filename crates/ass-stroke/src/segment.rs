@@ -1,6 +1,5 @@
 /// Mutable rich text implementation
 use std::{
-	convert::Infallible,
 	fmt::Debug,
 	ops::{Bound, Deref, DerefMut, RangeBounds},
 };
@@ -8,9 +7,7 @@ use std::{
 use smallvec::{smallvec, SmallVec};
 
 pub trait Meta: Clone {
-	type Apply;
 	fn try_merge(&mut self, other: &Self) -> bool;
-	fn apply(&mut self, change: &Self::Apply);
 }
 impl Meta for usize {
 	fn try_merge(&mut self, other: &Self) -> bool {
@@ -19,12 +16,10 @@ impl Meta for usize {
 		}
 		true
 	}
+}
 
-	type Apply = Infallible;
-
-	fn apply(&mut self, change: &Self::Apply) {
-		unreachable!()
-	}
+pub trait MetaApply<T> {
+	fn apply(&mut self, change: &T);
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -76,6 +71,9 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 		let segments = segments.into_iter().inspect(|s| len += s.len()).collect();
 		Self { segments, len }
 	}
+	pub fn single(data: impl IntoIterator<Item = D>, meta: M) -> Self {
+		Self::new([Segment::new(data, meta)])
+	}
 	pub fn compact(&mut self) {
 		if self.segments.len() <= 1 {
 			return;
@@ -116,12 +114,10 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 			Bound::Excluded(i) => *i,
 			Bound::Unbounded => self.len(),
 		};
-		dbg!(start, end);
 		if end > self.len() {
 			panic!("slice out of range: {end}")
 		}
 		for segment in self.segments.iter() {
-			dbg!(segment.len());
 			if start < segment.len() {
 				let end = segment.len().min(end);
 				segments.push(Segment::new(
@@ -132,7 +128,6 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 			}
 			start = start.saturating_sub(segment.len());
 			end = end.saturating_sub(segment.len());
-			dbg!(start, end);
 			if end == 0 {
 				break;
 			}
@@ -144,10 +139,7 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 		if offset > self.len() {
 			return None;
 		}
-		dbg!(offset, self.len());
-		eprintln!("Slice in get: {offset}");
 		let segment = &self.slice(offset..=offset).segments[0];
-		dbg!(segment);
 		Some((segment.data[0].clone(), segment.meta.clone()))
 	}
 
@@ -170,10 +162,8 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 		while segment_idx < self.segments.len() {
 			let segment_length = self.segments[segment_idx].len();
 			if start < segment_length {
-				println!("In segment {segment_idx}: {start}");
 				let removed = start..end.min(segment_length);
 				if start == 0 {
-					println!("Start");
 					// Beginning of segment
 					// abcdefg
 					// ^
@@ -203,7 +193,6 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 						segment_idx = segment_idx.saturating_sub(1);
 					}
 				} else {
-					println!("Middle");
 					// Inside of segment
 					// abcdefg
 					//   ^
@@ -231,7 +220,6 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 						self.len -= removed.end - removed.start;
 					}
 				}
-				dbg!(end);
 			}
 			if start < segment_length && end == start {
 				if insert_at.is_none() {
@@ -264,7 +252,10 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 	pub fn data(&self) -> impl Iterator<Item = &D> {
 		self.segments().flat_map(|s| s.data.iter())
 	}
-	pub fn apply_meta(&mut self, range: impl RangeBounds<usize> + Clone, apply: &M::Apply) {
+	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize> + Clone, apply: &T)
+	where
+		M: MetaApply<T>,
+	{
 		let mut slice = self.slice(range.clone());
 		for segment in slice.segments.iter_mut() {
 			segment.meta.apply(apply);
@@ -287,6 +278,28 @@ impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
 			let segment = Segment::new(vec![fill; extra], meta);
 			self.push(segment);
 		}
+	}
+
+	pub fn split(&self, char: D) -> Vec<Self>
+	where
+		D: PartialEq,
+	{
+		let mut offset = 0;
+		let mut out = Vec::new();
+		while offset != self.len() {
+			let size = self
+				.data()
+				.skip(offset)
+				.position(|d| d == &char)
+				.unwrap_or(self.len() - offset);
+			let segment = self.slice(offset..offset + size);
+			out.push(segment);
+			offset += size;
+			if offset != self.len() {
+				offset += 1;
+			}
+		}
+		out
 	}
 }
 

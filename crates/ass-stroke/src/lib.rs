@@ -1,104 +1,30 @@
-use std::{collections::HashMap, ops::RangeInclusive};
-
-// use segment::{Segment, SegmentBuffer};
-type TextPart = Segment<char, Formatting>;
-type Text = SegmentBuffer<char, Formatting>;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod segment;
+use annotation::{Annotation, AnnotationId, Opts};
+use anomaly_fixer::{apply_fixup, fixup_byte_to_char};
+use formatting::Text;
 use range_map::{Range, RangeSet};
-use segment::{Meta, Segment, SegmentBuffer};
-use single_line::{AnnotationId, LineAnnotation, Opts};
+use segment::{Segment, SegmentBuffer};
+use single_line::LineAnnotation;
 
+use crate::formatting::Formatting;
+
+mod annotation;
+mod anomaly_fixer;
 mod chars;
+mod formatting;
 mod single_line;
-
-#[derive(Default, Clone, PartialEq, Debug)]
-pub struct Formatting {
-	color: Option<u32>,
-	bg_color: Option<u32>,
-	bold: bool,
-	underline: bool,
-	decoration: bool,
-}
-impl Meta for Formatting {
-	fn try_merge(&mut self, other: &Self) -> bool {
-		self == other
-	}
-
-	type Apply = Formatting;
-
-	fn apply(&mut self, change: &Self::Apply) {
-		if let Some(color) = change.color {
-			self.color = Some(color);
-		}
-		if let Some(bg_color) = change.bg_color {
-			self.bg_color = Some(bg_color);
-		}
-		if change.bold {
-			self.bold = true;
-		}
-		if change.underline {
-			self.underline = true;
-		}
-	}
-}
-impl Formatting {
-	fn line_number() -> Self {
-		Self {
-			color: Some(0x92837400),
-			bg_color: Some(0x28282800),
-			..Default::default()
-		}
-	}
-	fn error() -> Self {
-		Self {
-			bg_color: Some(0xff000000),
-			..Default::default()
-		}
-	}
-	fn color(color: u32) -> Self {
-		Self {
-			color: Some(color),
-			..Default::default()
-		}
-	}
-	fn decoration(mut self) -> Self {
-		self.decoration = true;
-		self
-	}
-}
-
-pub(crate) fn print_buf(buf: &Text) {
-	for frag in buf.segments() {
-		if let Some(color) = frag.meta().color {
-			let [r, g, b, _a] = u32::to_be_bytes(color);
-			print!("\x1b[38;2;{r};{g};{b}m");
-		}
-		if let Some(bg_color) = frag.meta().bg_color {
-			let [r, g, b, _a] = u32::to_be_bytes(bg_color);
-			print!("\x1b[48;2;{r};{g};{b}m");
-		}
-		print!("{}", frag.iter().copied().collect::<String>());
-		if frag.meta().color.is_some() || frag.meta().bg_color.is_some() {
-			print!("\x1b[0m");
-		}
-	}
-}
 
 #[derive(Clone)]
 struct RawLine {
 	data: Text,
 }
-impl RawLine {
-	fn print(&self) {
-		print_buf(&self.data);
-		// for frag in self.data.iter() {}
-	}
-}
 
 struct AnnotationLine {
 	prefix: Text,
 	line: Text,
+	/// There will be lines drawn to connect lines with the same annotation id specified
 	annotation: Option<AnnotationId>,
 }
 
@@ -136,7 +62,6 @@ fn cons_slices<T>(mut slice: &mut [T], test: impl Fn(&T) -> bool) -> Vec<&mut [T
 	let mut out = Vec::new();
 
 	while !slice.is_empty() {
-		dbg!(slice.len());
 		let mut skip = 0;
 		while !slice.get(skip).map(&test).unwrap_or(true) {
 			skip += 1;
@@ -216,13 +141,8 @@ impl Line {
 	}
 }
 
-struct GlobalAnnotation {
-	range: RangeInclusive<usize>,
-	text: Text,
-}
-struct Source {
+pub struct Source {
 	lines: Vec<Line>,
-	global: Vec<GlobalAnnotation>,
 }
 
 fn cleanup_nops(source: &mut Source) {
@@ -235,6 +155,8 @@ fn cleanup_nops(source: &mut Source) {
 		}
 	}
 }
+
+/// Remove NOP/empty annotation lines
 fn cleanup(source: &mut Source) {
 	for slice in cons_slices(&mut source.lines, Line::is_text) {
 		for line in slice
@@ -263,7 +185,11 @@ fn cleanup(source: &mut Source) {
 	cleanup_nops(source);
 }
 
-fn process(source: &mut Source, opts: &Opts) {
+fn process(
+	source: &mut Source,
+	annotation_formats: HashMap<AnnotationId, Formatting>,
+	opts: &Opts,
+) {
 	cleanup(source);
 	// Format inline annotations
 	{
@@ -363,7 +289,11 @@ fn process(source: &mut Source, opts: &Opts) {
 
 			for group in grouped {
 				for annotation in group {
-					let annotation_fmt = Formatting::default().decoration();
+					let annotation_fmt = annotation_formats
+						.get(&annotation)
+						.expect("id is used in string but not defined")
+						.clone()
+						.decoration();
 					let conn = connected_annotations.get(&annotation).expect("exists");
 					let range = conn.range;
 					let mut max_index = usize::MAX;
@@ -371,20 +301,14 @@ fn process(source: &mut Source, opts: &Opts) {
 						match &lines[line] {
 							Line::Text(t) if t.line.data().all(|c| c.is_whitespace()) => {}
 							Line::Text(t) => {
-								print_buf(&t.line);
-								println!();
 								let whitespaces =
 									t.line.data().take_while(|i| i.is_whitespace()).count();
-								dbg!(whitespaces);
 								max_index = max_index.min(whitespaces)
 							}
 							Line::Annotation(t) if t.line.data().all(|c| c.is_whitespace()) => {}
 							Line::Annotation(t) => {
-								print_buf(&t.line);
-								println!();
 								let whitespaces =
 									t.line.data().take_while(|i| i.is_whitespace()).count();
-								dbg!(whitespaces);
 								max_index = max_index.min(whitespaces)
 							}
 							Line::Gap(_) => {}
@@ -461,11 +385,7 @@ fn process(source: &mut Source, opts: &Opts) {
 					}
 				}
 			}
-
-			// dbg!(grouped);
 		}
-
-		// todo!()
 	}
 	// Apply line numbers
 	{
@@ -530,184 +450,180 @@ fn process(source: &mut Source, opts: &Opts) {
 	cleanup(source);
 }
 
-fn parse(txt: &str) -> Source {
-	let lines = txt
+fn linestarts(str: &str) -> BTreeSet<usize> {
+	let mut linestarts = BTreeSet::new();
+	for (i, c) in str.chars().enumerate() {
+		if c == '\n' {
+			linestarts.insert(i + 1);
+		}
+	}
+	linestarts
+}
+struct LineCol {
+	line: usize,
+	column: usize,
+}
+fn offset_to_linecol(mut offset: usize, linestarts: &BTreeSet<usize>) -> LineCol {
+	let mut line = 0;
+	let last_offset = linestarts
+		.range(..=offset)
+		.inspect(|_| line += 1)
+		.last()
+		.copied()
+		.unwrap_or(0);
+	offset -= last_offset;
+	LineCol {
+		line,
+		column: offset,
+	}
+}
+
+pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
+	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, "    ");
+	let mut annotations = annotations.to_vec();
+
+	// Convert byte offsets to char offsets
+	for annotation in annotations.iter_mut() {
+		let ranges: RangeSet<usize> = annotation
+			.ranges
+			.ranges()
+			.map(|r| {
+				let mut start = r.start;
+				let mut end = r.end;
+				apply_fixup(&mut start, &byte_to_char_fixup);
+				apply_fixup(&mut end, &byte_to_char_fixup);
+				Range::new(start, end)
+			})
+			.collect();
+		annotation.ranges = ranges;
+	}
+	let linestarts = linestarts(&txt);
+
+	let mut lines: Vec<Line> = txt
 		.split('\n')
 		.map(|s| s.to_string())
 		.enumerate()
 		.map(|(num, line)| TextLine {
 			line_num: num + 1,
-			line: SegmentBuffer::new([Segment::new(line.chars(), Formatting::default())]),
+			line: SegmentBuffer::new([Segment::new(
+				// Reserve 1 char for the spans pointing to EOL
+				line.chars().chain([' '].into_iter()),
+				Formatting::default(),
+			)]),
 			prefix: SegmentBuffer::new([]),
 			annotations: Vec::new(),
 			annotation_buffers: Vec::new(),
 		})
 		.map(Line::Text)
 		.collect();
-	Source {
-		lines,
-		global: vec![],
+
+	for annotation in &annotations {
+		let mut line_ranges: BTreeMap<usize, RangeSet<usize>> = BTreeMap::new();
+		for range in annotation.ranges.ranges() {
+			let start = offset_to_linecol(range.start, &linestarts);
+			let end = offset_to_linecol(range.end, &linestarts);
+
+			if start.line == end.line {
+				let set = line_ranges.entry(start.line).or_insert_with(RangeSet::new);
+				*set = set.union(&[Range::new(start.column, end.column)].into_iter().collect());
+			} else {
+				{
+					let set = line_ranges.entry(start.line).or_insert_with(RangeSet::new);
+					let line = lines[start.line].as_text().expect("annotation OOB");
+					*set = set.union(
+						&[Range::new(start.column, line.len() - 1)]
+							.into_iter()
+							.collect(),
+					);
+				}
+				{
+					let set = line_ranges.entry(end.line).or_insert_with(RangeSet::new);
+					*set = set.union(&[Range::new(0, end.column)].into_iter().collect());
+				}
+			}
+		}
+		let left = line_ranges.len() > 1;
+		let line_ranges_len = line_ranges.len();
+
+		for (i, (line, ranges)) in line_ranges.into_iter().enumerate() {
+			let last = i == line_ranges_len - 1;
+			let line = lines[line].as_text_mut().expect("annotation OOB");
+			line.annotations.push(LineAnnotation {
+				id: annotation.id,
+				priority: annotation.priority,
+				ranges,
+				formatting: annotation.formatting.clone(),
+				left,
+				right: if last {
+					annotation.text.clone()
+				} else {
+					Text::empty()
+				},
+			})
+		}
 	}
+
+	let mut source = Source { lines };
+
+	let annotation_formats = annotations
+		.iter()
+		.map(|a| (a.id, a.formatting.clone()))
+		.collect();
+
+	process(&mut source, annotation_formats, opts);
+
+	source
 }
 
-fn print(s: &Source) {
-	for line in s.lines.iter() {
-		line.as_raw()
-			.expect("only raw expected after transforms")
-			.print();
-		println!();
+fn source_to_ansi(source: &Source) -> String {
+	let mut out = String::new();
+	for line in &source.lines {
+		let line = line
+			.as_raw()
+			.expect("after processing all lines should turn raw");
+		let mut data = line.data.clone();
+		data.compact();
+		formatting::text_to_ansi(&data, &mut out);
+		out.push('\n');
 	}
+	out
 }
 
-#[test]
-fn test_fmt() {
-	use range_map::Range;
-	use single_line::AnnotationIdAllocator;
-	let mut aid = AnnotationIdAllocator::new();
-	let mut s = parse(include_str!("../../../fixtures/std.jsonnet"));
+#[cfg(test)]
+mod tests {
+	use crate::annotation::AnnotationIdAllocator;
 
-	let local_def = aid.next();
-	s.lines[1].as_text_mut().unwrap().annotations.extend(vec![
-		LineAnnotation {
-			id: local_def,
-			priority: 0,
-			ranges: vec![Range::new(2, 6)].into_iter().collect(),
-			formatting: Formatting::color(0x00ff0000),
-			left: true,
-			right: vec![SegmentBuffer::new([Segment::new(
-				"Local def".chars(),
-				Formatting::default(),
-			)])],
-		},
-		LineAnnotation {
-			id: aid.next(),
-			priority: 0,
-			ranges: vec![Range::new(8, 10)].into_iter().collect(),
-			formatting: Formatting::color(0x0000ff00),
-			left: false,
-			right: vec![SegmentBuffer::new([Segment::new(
-				"Local name".chars(),
-				Formatting::default(),
-			)])],
-		},
-		LineAnnotation {
-			id: aid.next(),
-			priority: 0,
-			ranges: vec![Range::new(12, 12)].into_iter().collect(),
-			formatting: Formatting::color(0xff000000),
-			left: false,
-			right: vec![SegmentBuffer::new([Segment::new(
-				"Equals".chars(),
-				Formatting::default(),
-			)])],
-		},
-	]);
+	use super::*;
 
-	s.lines[99]
-		.as_text_mut()
-		.unwrap()
-		.annotations
-		.extend(vec![LineAnnotation {
-			id: local_def,
-			priority: 0,
-			ranges: vec![Range::new(4, 8)].into_iter().collect(),
-			formatting: Formatting::color(0x00ff0000),
-			left: true,
-			right: vec![SegmentBuffer::new([Segment::new(
-				"Another local def".chars(),
-				Formatting::default(),
-			)])],
-		}]);
-
-	{
-		let connected = aid.next();
-		s.lines[188]
-			.as_text_mut()
-			.unwrap()
-			.annotations
-			.extend(vec![LineAnnotation {
-				id: connected,
-				priority: 0,
-				ranges: vec![Range::new(10, 14)].into_iter().collect(),
-				formatting: Formatting::color(0x00ffff00),
-				left: true,
-				right: vec![],
-			}]);
-
-		s.lines[191]
-			.as_text_mut()
-			.unwrap()
-			.annotations
-			.extend(vec![LineAnnotation {
-				id: connected,
-				priority: 0,
-				ranges: vec![Range::new(10, 14)].into_iter().collect(),
-				formatting: Formatting::color(0x00ffff00),
-				left: true,
-				right: vec![],
-			}]);
-
-		s.lines[194]
-			.as_text_mut()
-			.unwrap()
-			.annotations
-			.extend(vec![LineAnnotation {
-				id: connected,
-				priority: 0,
-				ranges: vec![Range::new(10, 12)].into_iter().collect(),
-				formatting: Formatting::color(0x00ffff00),
-				left: true,
-				right: vec![SegmentBuffer::new([Segment::new(
-					"Example connected definition".chars(),
-					Formatting::default(),
-				)])],
-			}])
-	}
-	{
-		let conflicting_connection = aid.next();
-		s.lines[97]
-			.as_text_mut()
-			.unwrap()
-			.annotations
-			.extend(vec![LineAnnotation {
-				id: conflicting_connection,
-				priority: 0,
-				ranges: vec![Range::new(6, 7)].into_iter().collect(),
-				formatting: Formatting::color(0xffff0000),
-				left: true,
-				right: vec![],
-			}]);
-
-		s.lines[193]
-			.as_text_mut()
-			.unwrap()
-			.annotations
-			.extend(vec![LineAnnotation {
-				id: conflicting_connection,
-				priority: 0,
-				ranges: vec![Range::new(12, 14)].into_iter().collect(),
-				formatting: Formatting::color(0xffff0000),
-				left: true,
-				right: vec![SegmentBuffer::new([Segment::new(
-					"Example connected definition".chars(),
-					Formatting::default(),
-				)])],
-			}])
+	fn default<T: Default>() -> T {
+		Default::default()
 	}
 
-	s.global.push(GlobalAnnotation {
-		range: 2832..=3135,
-		text: SegmentBuffer::new([Segment::new("TEST".chars(), Formatting::default())]),
-	});
+	#[test]
+	fn test_fmt() {
+		use range_map::Range;
+		let mut aid = AnnotationIdAllocator::new();
+		let mut annotation_formats = HashMap::new();
 
-	process(
-		&mut s,
-		&Opts {
-			ratnest_sort: false,
-			ratnest_merge: false,
-			first_layer_reformats_orig: true,
-		},
-	);
+		let s = {
+			let id = aid.next();
+			annotation_formats.insert(id, Formatting::color(0xffffff00));
+			parse(
+				include_str!("../../../fixtures/std.jsonnet"),
+				&[Annotation {
+					id,
+					priority: 0,
+					formatting: Formatting::color(0xffffff00),
+					ranges: [Range::new(2832, 3135)].into_iter().collect(),
+					text: Text::single("Hello world".chars(), default()),
+				}],
+				&Opts {
+					first_layer_reformats_orig: true,
+					..default()
+				},
+			)
+		};
 
-	print(&s);
+		println!("{}", source_to_ansi(&s))
+	}
 }
