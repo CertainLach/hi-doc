@@ -517,7 +517,7 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 		.map(Line::Text)
 		.collect();
 
-	for annotation in &annotations {
+	for (aid, annotation) in annotations.iter().enumerate() {
 		let mut line_ranges: BTreeMap<usize, RangeSet<usize>> = BTreeMap::new();
 		for range in annotation.ranges.ranges() {
 			let start = offset_to_linecol(range.start, &linestarts);
@@ -549,7 +549,7 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 			let last = i == line_ranges_len - 1;
 			let line = lines[line].as_text_mut().expect("annotation OOB");
 			line.annotations.push(LineAnnotation {
-				id: annotation.id,
+				id: AnnotationId(aid),
 				priority: annotation.priority,
 				ranges,
 				formatting: annotation.formatting.clone(),
@@ -567,7 +567,8 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 
 	let annotation_formats = annotations
 		.iter()
-		.map(|a| (a.id, a.formatting.clone()))
+		.enumerate()
+		.map(|(aid, a)| (AnnotationId(aid), a.formatting.clone()))
 		.collect();
 
 	process(&mut source, annotation_formats, opts);
@@ -591,8 +592,6 @@ fn source_to_ansi(source: &Source) -> String {
 
 #[cfg(test)]
 mod tests {
-	use crate::annotation::AnnotationIdAllocator;
-
 	use super::*;
 
 	fn default<T: Default>() -> T {
@@ -602,27 +601,20 @@ mod tests {
 	#[test]
 	fn test_fmt() {
 		use range_map::Range;
-		let mut aid = AnnotationIdAllocator::new();
-		let mut annotation_formats = HashMap::new();
 
-		let s = {
-			let id = aid.next();
-			annotation_formats.insert(id, Formatting::color(0xffffff00));
-			parse(
-				include_str!("../../../fixtures/std.jsonnet"),
-				&[Annotation {
-					id,
-					priority: 0,
-					formatting: Formatting::color(0xffffff00),
-					ranges: [Range::new(2832, 3135)].into_iter().collect(),
-					text: Text::single("Hello world".chars(), default()),
-				}],
-				&Opts {
-					first_layer_reformats_orig: true,
-					..default()
-				},
-			)
-		};
+		let s = parse(
+			include_str!("../../../fixtures/std.jsonnet"),
+			&[Annotation {
+				priority: 0,
+				formatting: Formatting::color(0xffffff00),
+				ranges: [Range::new(2832, 3135)].into_iter().collect(),
+				text: Text::single("Hello world".chars(), default()),
+			}],
+			&Opts {
+				first_layer_reformats_orig: true,
+				..default()
+			},
+		);
 
 		println!("{}", source_to_ansi(&s))
 	}

@@ -1,22 +1,10 @@
-use std::ops::RangeInclusive;
-
 use range_map::RangeSet;
 
 use crate::formatting::{Formatting, Text};
 
+/// Used to identify interline connections
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
-pub struct AnnotationId(u32);
-pub struct AnnotationIdAllocator(u32);
-impl AnnotationIdAllocator {
-	pub fn new() -> Self {
-		Self(0)
-	}
-	pub fn next(&mut self) -> AnnotationId {
-		let id = self.0;
-		self.0 += 1;
-		AnnotationId(id)
-	}
-}
+pub(crate) struct AnnotationId(pub usize);
 
 #[derive(Default, Clone)]
 pub struct Opts {
@@ -31,7 +19,6 @@ pub struct Opts {
 
 #[derive(Clone)]
 pub struct Annotation {
-	pub id: AnnotationId,
 	pub priority: usize,
 	pub formatting: Formatting,
 	/// Byte ranges of the annotated regions
