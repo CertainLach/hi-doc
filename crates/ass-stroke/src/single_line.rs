@@ -10,6 +10,7 @@ use range_map::RangeSet;
 
 use crate::{
 	annotation::{AnnotationId, Opts},
+	anomaly_fixer::{self, apply_fixup},
 	segment::{Segment, SegmentBuffer},
 	Formatting, Text,
 };
@@ -71,6 +72,8 @@ pub(crate) fn generate_segment(
 	(Option<AnnotationId>, Text),
 	Vec<(Option<AnnotationId>, Text)>,
 ) {
+	let char_to_display = anomaly_fixer::fixup_char_to_display(text.data().copied());
+
 	if opts.ratnest_sort {
 		annotations.shuffle(&mut rand::thread_rng());
 	} else {
@@ -93,7 +96,8 @@ pub(crate) fn generate_segment(
 
 	let start_whitespaces = text.data().filter(|t| t.is_whitespace()).count();
 
-	let max_size = layers
+	// TODO: ignore first layer with `first_layer_reformats_orig`
+	let mut max_display_size = layers
 		.iter()
 		.flat_map(|l| l.iter())
 		.map(|i| annotations_by_id.get(i).expect("exists"))
@@ -106,6 +110,12 @@ pub(crate) fn generate_segment(
 		})
 		.max()
 		.expect("layer is not empty");
+	apply_fixup(&mut max_display_size, &char_to_display);
+
+	let char_to_display = |mut offset: usize| {
+		apply_fixup(&mut offset, &char_to_display);
+		offset
+	};
 
 	let mut dummy_layers = 0;
 
@@ -117,7 +127,7 @@ pub(crate) fn generate_segment(
 			{
 				// Dummy
 				let fmtlayer = SegmentBuffer::new([Segment::new(
-					vec![' '; max_size + 1],
+					vec![' '; max_display_size + 1],
 					Formatting::default(),
 				)]);
 				layers_pre.push(fmtlayer);
@@ -131,13 +141,16 @@ pub(crate) fn generate_segment(
 				}
 
 				for range in annotation.ranges.ranges() {
+					// No need to use fixups
 					text.apply_meta(range.start..=range.end, &annotation.formatting);
 				}
 			}
 		}
 		for layer in layers.iter().skip(dummy_layers) {
-			let mut fmtlayer =
-				SegmentBuffer::new([Segment::new(vec![' '; max_size + 1], Formatting::default())]);
+			let mut fmtlayer = SegmentBuffer::new([Segment::new(
+				vec![' '; max_display_size + 1],
+				Formatting::default(),
+			)]);
 
 			for annotation in layer
 				.iter()
@@ -148,12 +161,15 @@ pub(crate) fn generate_segment(
 						vec![CONTINUE]
 					} else {
 						let mut out = vec![RANGE_START];
-						out.resize(range.end - range.start, RANGE_CONTINUE);
+						out.resize(
+							char_to_display(range.end) - char_to_display(range.start),
+							RANGE_CONTINUE,
+						);
 						out.push(RANGE_END);
 						out
 					};
 					fmtlayer.splice(
-						range.start..=range.end,
+						char_to_display(range.start)..=char_to_display(range.end),
 						Some(SegmentBuffer::new([Segment::new(
 							data,
 							annotation.formatting.clone(),
@@ -176,10 +192,11 @@ pub(crate) fn generate_segment(
 						continue;
 					}
 					for start in annotation.ranges.ranges().map(|r| r.start) {
-						let (c, orig_fmt) = other.get(start).expect("extended to max");
+						let (c, orig_fmt) =
+							other.get(char_to_display(start)).expect("extended to max");
 						if let Some((keep_style, replacement)) = cross(c) {
 							other.splice(
-								start..=start,
+								char_to_display(start)..=char_to_display(start),
 								Some(SegmentBuffer::new([Segment::new(
 									[replacement],
 									if keep_style {
@@ -240,8 +257,10 @@ pub(crate) fn generate_segment(
 	{
 		use crate::chars::arrow::*;
 		for annotation in &annotations {
-			let mut fmtlayer =
-				SegmentBuffer::new([Segment::new(vec![' '; max_size + 1], Formatting::default())]);
+			let mut fmtlayer = SegmentBuffer::new([Segment::new(
+				vec![' '; max_display_size + 1],
+				Formatting::default(),
+			)]);
 			let mut extralayers = Vec::new();
 
 			let starts = annotation
@@ -279,7 +298,7 @@ pub(crate) fn generate_segment(
 					ARROW_RL
 				};
 				fmtlayer.splice(
-					start..=start,
+					char_to_display(*start)..=char_to_display(*start),
 					Some(SegmentBuffer::new([Segment::new(
 						[c],
 						annotation.formatting.clone(),
@@ -287,9 +306,9 @@ pub(crate) fn generate_segment(
 				);
 			}
 			let annotation_id = if annotation.left {
-				let size = min - min_pos;
+				let size = char_to_display(min) - char_to_display(min_pos);
 				fmtlayer.splice(
-					min_pos..min,
+					char_to_display(min_pos)..char_to_display(min),
 					Some(SegmentBuffer::new([Segment::new(
 						vec![ARROW_CONTINUE; size],
 						annotation.formatting.clone(),
@@ -302,9 +321,9 @@ pub(crate) fn generate_segment(
 			if !annotation.right.is_empty() {
 				let right = &annotation.right;
 
-				let size = max_size - max + 2;
+				let size = max_display_size - char_to_display(max) + 2;
 				fmtlayer.splice(
-					max + 1..max_size + 1,
+					char_to_display(max) + 1..max_display_size + 1,
 					Some(SegmentBuffer::new([Segment::new(
 						vec![ARROW_CONTINUE; size],
 						annotation.formatting.clone(),
@@ -315,14 +334,14 @@ pub(crate) fn generate_segment(
 				fmtlayer.extend(lines[0].clone());
 				for right in lines.iter().skip(1) {
 					let mut fmtlayer = SegmentBuffer::new([Segment::new(
-						vec![' '; max_size],
+						vec![' '; max_display_size],
 						Formatting::default(),
 					)]);
 					fmtlayer.extend(right.clone());
 					extralayers.push((None, fmtlayer));
 				}
 			}
-			for i in min..=max {
+			for i in char_to_display(min)..=char_to_display(max) {
 				if fmtlayer.get(i).unwrap().0 != ' ' {
 					continue;
 				}
@@ -346,7 +365,7 @@ pub(crate) fn generate_segment(
 					let (c, orig_fmt) = affected.1.get(start).expect("extended to max");
 					if let Some((keep_style, replacement)) = cross(c) {
 						affected.1.splice(
-							start..=start,
+							char_to_display(start)..=char_to_display(start),
 							Some(SegmentBuffer::new([Segment::new(
 								[replacement],
 								if keep_style {

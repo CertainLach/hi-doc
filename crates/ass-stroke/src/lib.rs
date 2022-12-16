@@ -635,4 +635,69 @@ mod tests {
 
 		println!("{}", source_to_ansi(&s))
 	}
+
+	#[test]
+	fn fullwidth_marker() {
+		let s = parse(
+			"ＡＢＣ",
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff000000),
+					ranges: [Range::new(0, 2)].into_iter().collect(),
+					text: Text::single("a".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ff0000),
+					ranges: [Range::new(3, 5)].into_iter().collect(),
+					text: Text::single("b".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x0000ff00),
+					ranges: [Range::new(6, 8)].into_iter().collect(),
+					text: Text::single("c".chars(), default()),
+				},
+			],
+			&Opts {
+				first_layer_reformats_orig: false,
+				allow_point_to_start: false,
+				..default()
+			},
+		);
+		println!("{}", source_to_ansi(&s))
+	}
+	#[test]
+	fn fullwidth_marker_apply() {
+		let s = parse(
+			"ＡＢＣ",
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff000000),
+					ranges: [Range::new(0, 2)].into_iter().collect(),
+					text: Text::single("a".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ff0000),
+					ranges: [Range::new(3, 5)].into_iter().collect(),
+					text: Text::single("b".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x0000ff00),
+					ranges: [Range::new(6, 8)].into_iter().collect(),
+					text: Text::single("c".chars(), default()),
+				},
+			],
+			&Opts {
+				first_layer_reformats_orig: true,
+				allow_point_to_start: false,
+				..default()
+			},
+		);
+		println!("{}", source_to_ansi(&s))
+	}
 }
