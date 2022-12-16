@@ -210,7 +210,7 @@ pub(crate) fn apply_inline_annotations(
 	}
 	if let Some((formatting, right)) = right {
 		text.extend(Text::single(
-			[crate::chars::arrow::ARROW_CONTINUE, ' '],
+			[crate::chars::arrow::ARROW_INLINE, ' '],
 			formatting,
 		));
 		text.extend(right);

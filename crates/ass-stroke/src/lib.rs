@@ -315,7 +315,6 @@ fn process(
 				.collect::<Vec<_>>();
 			grouped.sort_by_key(|a| a.1.num_elements());
 			let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
-			dbg!(&grouped);
 
 			for group in grouped {
 				for annotation in group {

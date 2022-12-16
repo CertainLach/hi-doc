@@ -76,6 +76,8 @@ pub mod arrow {
 	pub const ARROW_CONTINUE_CROSS: char = '┼';
 	pub const ARROW_CONTINUE_CROSS_CROSS: char = '╂';
 
+	pub const ARROW_INLINE: char = '🢒';
+
 	pub fn cross(char: char) -> Option<(bool, char)> {
 		match char {
 			CONTINUE => Some((true, CONTINUE_CROSS)),
