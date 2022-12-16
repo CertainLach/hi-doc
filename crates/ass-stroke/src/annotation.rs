@@ -13,6 +13,7 @@ pub struct Opts {
 	pub apply_to_orig: bool,
 	/// Allow hiding source lines containing no annotations
 	pub fold: bool,
+	pub tab_width: usize,
 }
 
 #[derive(Clone)]

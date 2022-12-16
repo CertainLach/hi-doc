@@ -507,7 +507,7 @@ fn offset_to_linecol(mut offset: usize, linestarts: &BTreeSet<usize>) -> LineCol
 }
 
 pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
-	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, "    ");
+	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, opts.tab_width);
 	let mut annotations = annotations.to_vec();
 
 	// Convert byte offsets to char offsets
@@ -658,6 +658,7 @@ mod tests {
 			&Opts {
 				apply_to_orig: true,
 				fold: true,
+				tab_width: 4,
 			},
 		);
 
@@ -691,10 +692,39 @@ mod tests {
 			&Opts {
 				apply_to_orig: false,
 				fold: true,
+				tab_width: 4,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
 	}
+
+	#[test]
+	fn tab_in_normal_and_fullwidth() {
+		let s = parse(
+			"Ａ\tＢ\n\tＢ\na\tb\n\tb",
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff000000),
+					ranges: [Range::new(17, 17)].into_iter().collect(),
+					text: Text::single("Line start".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ff0000),
+					ranges: [Range::new(18, 18)].into_iter().collect(),
+					text: Text::single("Aligned".chars(), default()),
+				},
+			],
+			&Opts {
+				apply_to_orig: false,
+				fold: false,
+				tab_width: 4,
+			},
+		);
+		println!("{}", source_to_ansi(&s))
+	}
+
 	#[test]
 	fn fullwidth_marker_apply() {
 		let s = parse(
@@ -722,6 +752,7 @@ mod tests {
 			&Opts {
 				apply_to_orig: true,
 				fold: true,
+				tab_width: 4,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
@@ -771,6 +802,7 @@ mod tests {
 			&Opts {
 				apply_to_orig: true,
 				fold: true,
+				tab_width: 4,
 			},
 		);
 		println!("{}", source_to_ansi(&s))

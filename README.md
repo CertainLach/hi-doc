@@ -12,11 +12,13 @@ Diagnostics library
 
 - [x] Multi-line annotation text
 
-- [x] Correct handling of non-printable control characters, and configurable tab width
-
 - [x] Support for unicode fullwidth characters
 
   ![code with fullwidth characters](./fixtures/fullwidth.png)
+
+- [x] Correct handling of non-printable control characters, and configurable tab width
+
+  ![tab alignment](./fixtures/tab_alignment.png)
 
 - [x] Formatting of the annotation text itself
 

@@ -163,7 +163,7 @@ thread_local! {
 /// Characters, which should be displayed as-is, but whose occupy more that one column, will be kept as is, and offsets will be fixed later
 ///
 /// Returns fixups to convert byte offsets to char offsets using [`apply_fixups`]
-pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize, isize>) {
+pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap<usize, isize>) {
 	let mut fixups = BTreeMap::new();
 	let mut out = String::new();
 	let mut fixup = |byte_offset: usize, source_bytes: usize, output_chars: usize| {
@@ -173,6 +173,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 	};
 
 	let mut total_byte_offset = 0;
+	let mut display_offset_since_newline = 0;
 	loop {
 		let mut current_segment_offset = 0;
 		for char in text.chars().take_while(|char| {
@@ -182,6 +183,11 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 			fixup(total_byte_offset, char_bytes, 1);
 			current_segment_offset += char_bytes;
 			total_byte_offset += char_bytes;
+			if char == '\n' {
+				display_offset_since_newline = 0;
+			} else {
+				display_offset_since_newline += if is_fullwidth(char) { 2 } else { 1 };
+			}
 		}
 		out.push_str(&text[..current_segment_offset]);
 		text = &text[current_segment_offset..];
@@ -193,10 +199,19 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 		let char = text.chars().next().expect("not empty");
 		let bytes = text.as_bytes();
 		match char {
+			// Tab character aligns next symbol to next multiply of tab_width display characters
 			'\t' => {
-				out.push_str(tab);
+				let mut size = 1;
+				display_offset_since_newline += 1;
+				while display_offset_since_newline % tab_width != 0 {
+					display_offset_since_newline += 1;
+					size += 1;
+				}
+				for _ in 0..size {
+					out.push(' ');
+				}
 				text = &text[1..];
-				fixup(total_byte_offset, 1, tab.len());
+				fixup(total_byte_offset, 1, size);
 				total_byte_offset += 1;
 			}
 			'\r' if bytes[1] == b'\n' => {
@@ -204,17 +219,21 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 				text = &text[2..];
 				fixup(total_byte_offset, 2, 1);
 				total_byte_offset += 2;
+
+				display_offset_since_newline = 0;
 			}
 			'\r' => {
 				out.push_str("<CR>");
 				text = &text[1..];
 				fixup(total_byte_offset, 1, 4);
+				display_offset_since_newline += 4;
 				total_byte_offset += 1;
 			}
 			'\0' => {
 				out.push_str("<NUL>");
 				text = &text[1..];
 				fixup(total_byte_offset, 1, 5);
+				display_offset_since_newline += 5;
 				total_byte_offset += 1;
 			}
 			c => {
@@ -222,6 +241,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 				out.push_str(&str);
 				let size = c.len_utf8();
 				fixup(total_byte_offset, size, str.len());
+				display_offset_since_newline += str.len();
 				text = &text[size..];
 				total_byte_offset += size;
 			}
@@ -231,19 +251,10 @@ pub fn fixup_byte_to_char(mut text: &str, tab: &str) -> (String, BTreeMap<usize,
 	(out, fixups)
 }
 
-/// Some of the unicode codepoints require two columns to display, this function generates fixup to adjust
-/// char position to display
-pub fn fixup_char_to_display(text: impl Iterator<Item = char>) -> BTreeMap<usize, isize> {
-	let mut fixups = BTreeMap::new();
-	let mut fixup = |byte_offset: usize, chars: usize, display_chars: usize| {
-		let entry = fixups.entry(byte_offset).or_default();
-		*entry -= chars as isize;
-		*entry += display_chars as isize;
-	};
-	for (char_index, char) in text.enumerate() {
-		let ucs = char as u32;
-		if ucs >= 0x1100
-			&& (ucs <= 0x115f ||
+fn is_fullwidth(c: char) -> bool {
+	let ucs = c as u32;
+	ucs >= 0x1100
+		&& (ucs <= 0x115f ||
 			// Hangul Jamo init. consonants
 			ucs == 0x2329 || ucs == 0x232a ||
 			// CJK ... Yi
@@ -261,7 +272,19 @@ pub fn fixup_char_to_display(text: impl Iterator<Item = char>) -> BTreeMap<usize
 			(0xffe0..=0xffe6).contains(&ucs) ||
 			(0x20000..=0x2fffd).contains(&ucs) ||
 			(0x30000..=0x3fffd).contains(&ucs))
-		{
+}
+
+/// Some of the unicode codepoints require two columns to display, this function generates fixup to adjust
+/// char position to display
+pub fn fixup_char_to_display(text: impl Iterator<Item = char>) -> BTreeMap<usize, isize> {
+	let mut fixups = BTreeMap::new();
+	let mut fixup = |byte_offset: usize, chars: usize, display_chars: usize| {
+		let entry = fixups.entry(byte_offset).or_default();
+		*entry -= chars as isize;
+		*entry += display_chars as isize;
+	};
+	for (char_index, char) in text.enumerate() {
+		if is_fullwidth(char) {
 			fixup(char_index, 1, 2)
 		}
 	}
@@ -289,7 +312,7 @@ mod replacements {
 
 	#[test]
 	fn cr() {
-		let (out, map) = fixup_byte_to_char("\rhello", "");
+		let (out, map) = fixup_byte_to_char("\rhello", 4);
 		let mut offsets = [0, 1];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "<CR>hello");
@@ -298,7 +321,7 @@ mod replacements {
 
 	#[test]
 	fn tab() {
-		let (out, map) = fixup_byte_to_char("\t\thello", "  ");
+		let (out, map) = fixup_byte_to_char("\t\thello", 2);
 		let mut offsets = [0, 1, 2];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "    hello");
@@ -307,7 +330,7 @@ mod replacements {
 
 	#[test]
 	fn combining() {
-		let (out, map) = fixup_byte_to_char("\u{0610}", "");
+		let (out, map) = fixup_byte_to_char("\u{0610}", 4);
 		let mut offsets = [0, 2];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "<U+0610>");
@@ -316,7 +339,7 @@ mod replacements {
 
 	#[test]
 	fn combining_emoji() {
-		let (out, map) = fixup_byte_to_char("👨‍👨‍👧‍👧", "");
+		let (out, map) = fixup_byte_to_char("👨‍👨‍👧‍👧", 4);
 		let mut offsets = [0, 4, 7, 11, 14];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "👨<U+200D>👨<U+200D>👧<U+200D>👧");
