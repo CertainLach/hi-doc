@@ -67,7 +67,10 @@ pub(crate) fn generate_segment(
 	mut annotations: Vec<LineAnnotation>,
 	mut text: Text,
 	opts: &Opts,
-) -> (Text, Vec<(Option<AnnotationId>, Text)>) {
+) -> (
+	(Option<AnnotationId>, Text),
+	Vec<(Option<AnnotationId>, Text)>,
+) {
 	if opts.ratnest_sort {
 		annotations.shuffle(&mut rand::thread_rng());
 	} else {
@@ -87,19 +90,9 @@ pub(crate) fn generate_segment(
 		.collect::<HashMap<_, _>>();
 
 	let mut layers_pre = Vec::new();
-	let min_pos = layers
-		.iter()
-		.flat_map(|l| l.iter())
-		.map(|i| annotations_by_id.get(i).expect("exists"))
-		.map(|a| {
-			a.ranges
-				.ranges()
-				.next()
-				.expect("no range in annotation")
-				.start
-		})
-		.min()
-		.expect("layer is not empty");
+
+	let start_whitespaces = text.data().filter(|t| t.is_whitespace()).count();
+
 	let max_size = layers
 		.iter()
 		.flat_map(|l| l.iter())
@@ -113,9 +106,14 @@ pub(crate) fn generate_segment(
 		})
 		.max()
 		.expect("layer is not empty");
+
+	let mut dummy_layers = 0;
+
+	let mut primary_annotation = None;
 	{
 		use crate::chars::single::*;
 		if opts.first_layer_reformats_orig {
+			dummy_layers += 1;
 			{
 				// Dummy
 				let fmtlayer = SegmentBuffer::new([Segment::new(
@@ -128,16 +126,16 @@ pub(crate) fn generate_segment(
 				.iter()
 				.map(|i| annotations_by_id.get(i).expect("exists"))
 			{
+				if opts.allow_point_to_start && annotation.ranges.contains(start_whitespaces) {
+					primary_annotation = Some(annotation.id);
+				}
+
 				for range in annotation.ranges.ranges() {
 					text.apply_meta(range.start..=range.end, &annotation.formatting);
 				}
 			}
 		}
-		for layer in layers.iter().skip(if opts.first_layer_reformats_orig {
-			1
-		} else {
-			0
-		}) {
+		for layer in layers.iter().skip(dummy_layers) {
 			let mut fmtlayer =
 				SegmentBuffer::new([Segment::new(vec![' '; max_size + 1], Formatting::default())]);
 
@@ -167,12 +165,16 @@ pub(crate) fn generate_segment(
 			layers_pre.push(fmtlayer);
 		}
 
+		// Draw crosses over other layers
 		for (i, layer) in layers.iter().enumerate() {
 			for other in layers_pre[i + 1..].iter_mut() {
 				for annotation in layer
 					.iter()
 					.map(|i| annotations_by_id.get(i).expect("exists"))
 				{
+					if primary_annotation == Some(annotation.id) {
+						continue;
+					}
 					for start in annotation.ranges.ranges().map(|r| r.start) {
 						let (c, orig_fmt) = other.get(start).expect("extended to max");
 						if let Some((keep_style, replacement)) = cross(c) {
@@ -193,6 +195,34 @@ pub(crate) fn generate_segment(
 			}
 		}
 	}
+
+	let min_pos = layers
+		.iter()
+		.flat_map(|l| l.iter())
+		.map(|i| annotations_by_id.get(i).expect("exists"))
+		.map(|a| {
+			if primary_annotation == Some(a.id) {
+				start_whitespaces
+			} else {
+				a.ranges
+					.ranges()
+					.next()
+					.expect("no range in annotation")
+					.start
+			}
+		})
+		.min()
+		.expect("layer is not empty");
+
+	if let Some(primary_annotation) = primary_annotation {
+		let id = annotations
+			.iter()
+			.position(|a| a.id == primary_annotation)
+			.expect("exists");
+		if annotations[id].right.is_empty() {
+			annotations.remove(id);
+		}
+	};
 
 	if opts.ratnest_sort {
 		annotations.shuffle(&mut rand::thread_rng());
@@ -217,7 +247,13 @@ pub(crate) fn generate_segment(
 			let starts = annotation
 				.ranges
 				.ranges()
-				.map(|r| r.start)
+				.map(|r| {
+					if primary_annotation == Some(annotation.id) {
+						start_whitespaces.max(r.start)
+					} else {
+						r.start
+					}
+				})
 				.collect::<Vec<_>>();
 
 			let mut min = usize::MAX;
@@ -227,7 +263,9 @@ pub(crate) fn generate_segment(
 				let last = i == starts.len() - 1;
 				min = min.min(*start);
 				max = max.max(*start);
-				let c = if annotation.left && !annotation.right.is_empty() {
+				let c = if primary_annotation == Some(annotation.id) {
+					ARROW_CONTINUE
+				} else if annotation.left && !annotation.right.is_empty() {
 					ARROW_RL
 				} else if annotation.left && last {
 					ARROW_L
@@ -301,6 +339,7 @@ pub(crate) fn generate_segment(
 			// layers.extend(extralayers);
 			layers.push(extralayers);
 		}
+		// Cross lines for earlier displayed annotations
 		for (i, annotation) in annotations.iter().enumerate() {
 			for affected in layers[..i].iter_mut().flatten() {
 				for start in annotation.ranges.ranges().map(|r| r.start) {
@@ -324,18 +363,14 @@ pub(crate) fn generate_segment(
 	}
 
 	let mut out = Vec::new();
-	for layer in layers_pre.iter().skip(if opts.first_layer_reformats_orig {
-		1
-	} else {
-		0
-	}) {
+	for layer in layers_pre.iter().skip(dummy_layers) {
 		out.push((None, layer.clone()));
 	}
 	for layer in layers.iter().flatten() {
 		out.push(layer.clone())
 	}
 
-	(text, out)
+	((primary_annotation, text), out)
 }
 
 /*
@@ -371,7 +406,7 @@ mod tests {
 			AnnotationId(caid)
 		};
 
-		generate_segment(
+		let out = generate_segment(
 			vec![
 				LineAnnotation {
 					id: aid(),
@@ -421,6 +456,7 @@ mod tests {
 				ratnest_sort: true,
 				ratnest_merge: true,
 				first_layer_reformats_orig: true,
+				allow_point_to_start: false,
 			},
 		);
 	}

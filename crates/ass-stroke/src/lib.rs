@@ -37,6 +37,7 @@ struct TextLine {
 	prefix: Text,
 	line_num: usize,
 	line: Text,
+	annotation: Option<AnnotationId>,
 	annotations: Vec<LineAnnotation>,
 	annotation_buffers: Vec<(Option<AnnotationId>, Text)>,
 }
@@ -199,9 +200,10 @@ fn process(
 			.flat_map(Line::as_text_mut)
 			.filter(|t| !t.annotations.is_empty())
 		{
-			let (replace, extra) =
+			let ((primary_annotation, replace), extra) =
 				single_line::generate_segment(line.annotations.clone(), line.line.clone(), opts);
 			line.line = replace;
+			line.annotation = primary_annotation;
 			line.annotation_buffers = extra;
 			line.annotations.truncate(0);
 		}
@@ -216,7 +218,7 @@ fn process(
 				let Line::Text(t) = ctx else {
 					continue;
 				};
-				if t.annotation_buffers.is_empty() {
+				if t.annotation_buffers.is_empty() && t.annotation.is_none() {
 					continue;
 				}
 				continue 'line;
@@ -266,18 +268,23 @@ fn process(
 
 			let mut connected_annotations = HashMap::new();
 			for (i, line) in lines.iter().enumerate() {
-				if let Some(annotation) = line.as_annotation() {
-					if let Some(annotation) = annotation.annotation {
-						let conn = connected_annotations
-							.entry(annotation)
-							.or_insert(Connection {
-								range: Range::new(i, i),
-								connected: Vec::new(),
-							});
-						conn.range.start = conn.range.start.min(i);
-						conn.range.end = conn.range.end.max(i);
-						conn.connected.push(i);
-					}
+				let annotation = if let Some(annotation) = line.as_annotation() {
+					annotation.annotation
+				} else if let Some(text) = line.as_text() {
+					text.annotation
+				} else {
+					None
+				};
+				if let Some(annotation) = annotation {
+					let conn = connected_annotations
+						.entry(annotation)
+						.or_insert(Connection {
+							range: Range::new(i, i),
+							connected: Vec::new(),
+						});
+					conn.range.start = conn.range.start.min(i);
+					conn.range.end = conn.range.end.max(i);
+					conn.connected.push(i);
 				}
 			}
 			let mut grouped = connected_annotations
@@ -510,6 +517,7 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 				line.chars().chain([' '].into_iter()),
 				Formatting::default(),
 			)]),
+			annotation: None,
 			prefix: SegmentBuffer::new([]),
 			annotations: Vec::new(),
 			annotation_buffers: Vec::new(),
@@ -604,14 +612,23 @@ mod tests {
 
 		let s = parse(
 			include_str!("../../../fixtures/std.jsonnet"),
-			&[Annotation {
-				priority: 0,
-				formatting: Formatting::color(0xffffff00),
-				ranges: [Range::new(2832, 3135)].into_iter().collect(),
-				text: Text::single("Hello world".chars(), default()),
-			}],
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xffffff00),
+					ranges: [Range::new(2832, 3135)].into_iter().collect(),
+					text: Text::single("Hello world".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff00ff00),
+					ranges: [Range::new(2838, 2847)].into_iter().collect(),
+					text: Text::single("Conflict".chars(), default()),
+				},
+			],
 			&Opts {
 				first_layer_reformats_orig: true,
+				allow_point_to_start: true,
 				..default()
 			},
 		);
