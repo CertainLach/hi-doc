@@ -185,7 +185,7 @@ pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 			if !occupied.intersection(&other.1).is_empty() {
 				continue;
 			}
-			if processed.insert(other.0) {
+			if !processed.insert(other.0) {
 				continue;
 			}
 			occupied = occupied.union(&other.1);

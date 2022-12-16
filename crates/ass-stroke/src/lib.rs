@@ -282,6 +282,7 @@ fn process(
 		for lines in &mut cons_slices(&mut source.lines, |l| {
 			l.is_annotation() || l.is_text() || l.is_gap()
 		}) {
+			#[derive(Debug)]
 			struct Connection {
 				range: Range<usize>,
 				connected: Vec<usize>,
@@ -314,6 +315,7 @@ fn process(
 				.collect::<Vec<_>>();
 			grouped.sort_by_key(|a| a.1.num_elements());
 			let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
+			dbg!(&grouped);
 
 			for group in grouped {
 				for annotation in group {
@@ -630,9 +632,63 @@ mod tests {
 	}
 
 	#[test]
-	fn test_fmt() {
-		use range_map::Range;
+	fn readme() {
+		let s = parse(
+			include_str!("../../../fixtures/std.jsonnet"),
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ff0000),
+					ranges: [Range::new(4, 8), Range::new(3142, 3146)]
+						.into_iter()
+						.collect(),
+					text: Text::single("Local defs".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xe942f500),
+					ranges: [Range::new(10, 12)].into_iter().collect(),
+					text: Text::single("Local name".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff000000),
+					ranges: [Range::new(14, 14)].into_iter().collect(),
+					text: Text::single("Equals".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xffff0000),
+					ranges: [Range::new(3133, 3135), Range::new(6155, 6157)]
+						.into_iter()
+						.collect(),
+					text: Text::single("Connected definition".chars(), default()),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ffff00),
+					ranges: [
+						Range::new(5909, 5913),
+						Range::new(6062, 6066),
+						Range::new(6242, 6244),
+					]
+					.into_iter()
+					.collect(),
+					text: Text::single("Another connected definition".chars(), default()),
+				},
+			],
+			&Opts {
+				apply_to_orig: true,
+				fold: true,
+				tab_width: 4,
+			},
+		);
 
+		println!("{}", source_to_ansi(&s))
+	}
+
+	#[test]
+	fn test_fmt() {
 		let s = parse(
 			include_str!("../../../fixtures/std.jsonnet"),
 			&[
