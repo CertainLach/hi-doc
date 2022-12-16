@@ -1,16 +1,15 @@
 use core::fmt;
 use std::{
 	cmp::Reverse,
-	collections::{HashMap, HashSet},
+	collections::{BTreeMap, HashMap, HashSet},
 };
 
 use num_traits::PrimInt;
-use rand::seq::SliceRandom;
 use range_map::RangeSet;
 
 use crate::{
-	annotation::{AnnotationId, Opts},
-	anomaly_fixer::{self, apply_fixup},
+	annotation::AnnotationId,
+	anomaly_fixer::apply_fixup,
 	segment::{Segment, SegmentBuffer},
 	Formatting, Text,
 };
@@ -29,18 +28,154 @@ pub(crate) struct LineAnnotation {
 	pub right: Text,
 }
 
+#[derive(Debug)]
+pub(crate) struct InlineAnnotation {
+	ranges: RangeSet<usize>,
+	formatting: Formatting,
+}
+
+#[derive(Debug)]
+pub(crate) struct SingleLine {
+	pub annotation: Option<AnnotationId>,
+	pub right: Option<(Formatting, Text)>,
+	pub inline: Vec<InlineAnnotation>,
+	pub hide_ranges_for: HashSet<AnnotationId>,
+	pub processed: HashSet<AnnotationId>,
+}
+
+fn can_use(occupied: &RangeSet<usize>, ranges: &RangeSet<usize>) -> bool {
+	if !occupied.intersection(ranges).is_empty() {
+		for range in ranges.ranges() {
+			if range.start == 0 {
+				return false;
+			}
+			for i in range.start - 1..=range.end + 1 {
+				if !occupied.contains(i) {
+					return false;
+				}
+			}
+		}
+	}
+	true
+}
+
+pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
+	let mut processed = HashSet::new();
+	let mut occupied = RangeSet::new();
+
+	let mut inline = Vec::new();
+
+	let mut annotation = if let Some(leftmost) = annotations
+		.iter()
+		.filter(|a| !processed.contains(&a.id))
+		.filter(|a| a.left && a.right.is_empty())
+		.filter(|a| can_use(&occupied, &a.ranges))
+		.min_by_key(|a| {
+			(
+				Reverse(a.priority),
+				a.ranges.elements().next().unwrap_or(usize::MAX),
+				Reverse(a.ranges.num_elements()),
+			)
+		}) {
+		processed.insert(leftmost.id);
+		occupied = occupied.union(&leftmost.ranges);
+
+		inline.push(InlineAnnotation {
+			ranges: leftmost.ranges.clone(),
+			formatting: leftmost.formatting.clone(),
+		});
+		Some(leftmost.id)
+	} else {
+		None
+	};
+
+	let mut right = if let Some(rightmost) = annotations
+		.iter()
+		.filter(|a| !processed.contains(&a.id))
+		.filter(|a| !a.left && !a.right.is_empty() && a.right.data().all(|c| *c != '\n'))
+		.filter(|a| can_use(&occupied, &a.ranges))
+		.max_by_key(|a| {
+			(
+				a.priority,
+				a.ranges.elements().last().unwrap_or(0),
+				a.ranges.num_elements(),
+			)
+		}) {
+		processed.insert(rightmost.id);
+		occupied = occupied.union(&rightmost.ranges);
+
+		inline.push(InlineAnnotation {
+			ranges: rightmost.ranges.clone(),
+			formatting: rightmost.formatting.clone(),
+		});
+
+		Some((rightmost.formatting.clone(), rightmost.right.clone()))
+	} else {
+		None
+	};
+
+	if annotation.is_none() && right.is_none() {
+		if let Some(most) = annotations
+			.iter()
+			.filter(|a| !processed.contains(&a.id))
+			.filter(|a| a.left && a.right.data().all(|c| *c != '\n'))
+			.filter(|a| can_use(&occupied, &a.ranges))
+			.min_by_key(|a| {
+				(
+					Reverse(a.priority),
+					a.ranges.elements().next().unwrap_or(usize::MAX),
+					Reverse(a.ranges.num_elements()),
+				)
+			}) {
+			processed.insert(most.id);
+			occupied = occupied.union(&most.ranges);
+
+			inline.push(InlineAnnotation {
+				ranges: most.ranges.clone(),
+				formatting: most.formatting.clone(),
+			});
+			annotation = Some(most.id);
+			right = Some((most.formatting.clone(), most.right.clone()));
+		}
+	}
+
+	let mut hide_ranges_for = HashSet::new();
+
+	// Ensure inlined annotations are not shadowing leftmost/rightmost item
+	// New annotation should be either not intersect with others, or
+	for a in annotations.iter().filter(|a| !processed.contains(&a.id)) {
+		if !can_use(&occupied, &a.ranges) {
+			continue;
+		}
+		inline.push(InlineAnnotation {
+			ranges: a.ranges.clone(),
+			formatting: a.formatting.clone(),
+		});
+		hide_ranges_for.insert(a.id);
+	}
+
+	SingleLine {
+		annotation,
+		right,
+		inline,
+		hide_ranges_for,
+		processed,
+	}
+}
+
 /// Distribute annotations per layers
 /// In single layer, no annotation range conflicts will occur
 ///
 /// Sorting order is not determined, and depends on sorting of original array
 pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
-	annotations: Vec<(AnnotationId, RangeSet<T>)>,
+	annotations: &[(AnnotationId, RangeSet<T>)],
+	exclude: &HashSet<AnnotationId>,
 ) -> Vec<Vec<AnnotationId>> {
 	let mut layers = vec![];
+	let mut processed = exclude.clone();
 
-	let mut pending = annotations.iter().map(|a| a.0).collect::<HashSet<_>>();
 	for (i, annotation) in annotations.iter().enumerate() {
-		if !pending.remove(&annotation.0) {
+		if !processed.insert(annotation.0) {
 			continue;
 		}
 		let mut occupied = annotation.1.clone();
@@ -50,7 +185,7 @@ pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 			if !occupied.intersection(&other.1).is_empty() {
 				continue;
 			}
-			if !pending.remove(&other.0) {
+			if processed.insert(other.0) {
 				continue;
 			}
 			occupied = occupied.union(&other.1);
@@ -63,28 +198,48 @@ pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 	layers
 }
 
-#[allow(dead_code)]
-pub(crate) fn generate_segment(
-	mut annotations: Vec<LineAnnotation>,
-	mut text: Text,
-	opts: &Opts,
-) -> (
-	(Option<AnnotationId>, Text),
-	Vec<(Option<AnnotationId>, Text)>,
+pub(crate) fn apply_inline_annotations(
+	text: &mut Text,
+	annotations: &[InlineAnnotation],
+	right: Option<(Formatting, Text)>,
 ) {
-	let char_to_display = anomaly_fixer::fixup_char_to_display(text.data().copied());
+	for annotation in annotations {
+		for range in annotation.ranges.ranges() {
+			text.apply_meta(range.start..=range.end, &annotation.formatting)
+		}
+	}
+	if let Some((formatting, right)) = right {
+		text.extend(Text::single(
+			[crate::chars::arrow::ARROW_CONTINUE, ' '],
+			formatting,
+		));
+		text.extend(right);
+	}
+}
 
-	if opts.ratnest_sort {
-		annotations.shuffle(&mut rand::thread_rng());
-	} else {
-		annotations.sort_by_key(|ann| (Reverse(ann.priority), Reverse(ann.ranges.num_elements())));
+#[allow(dead_code)]
+pub(crate) fn generate_range_annotations(
+	mut annotations: Vec<LineAnnotation>,
+	char_to_display_fixup: &BTreeMap<usize, isize>,
+	hide_ranges_for: &HashSet<AnnotationId>,
+) -> Vec<(Option<AnnotationId>, Text)> {
+	if annotations.is_empty() {
+		return Vec::new();
 	}
 
-	let layers = group_nonconflicting(
-		annotations
+	let char_to_display = move |mut offset: usize| {
+		apply_fixup(&mut offset, char_to_display_fixup);
+		offset
+	};
+
+	annotations.sort_by_key(|ann| (Reverse(ann.priority), Reverse(ann.ranges.num_elements())));
+
+	let per_line_ranges = group_nonconflicting(
+		&annotations
 			.iter()
 			.map(|a| (a.id, a.ranges.clone()))
-			.collect(),
+			.collect::<Vec<_>>(),
+		hide_ranges_for,
 	);
 
 	let annotations_by_id = annotations
@@ -92,66 +247,35 @@ pub(crate) fn generate_segment(
 		.map(|a| (a.id, a))
 		.collect::<HashMap<_, _>>();
 
-	let mut layers_pre = Vec::new();
+	let mut range_fmt_layers = Vec::new();
+	// Useless range - which contains only single-char pointers
+	let mut useless_range_fmt_layers = Vec::new();
 
-	let start_whitespaces = text.data().filter(|t| t.is_whitespace()).count();
+	let max_range_display = char_to_display(
+		per_line_ranges
+			.iter()
+			.flat_map(|l| l.iter())
+			.map(|i| annotations_by_id.get(i).expect("exists"))
+			.map(|a| {
+				a.ranges
+					.ranges()
+					.last()
+					.expect("no range in annotation")
+					.end
+			})
+			.max()
+			.unwrap_or(0),
+	);
 
-	// TODO: ignore first layer with `first_layer_reformats_orig`
-	let mut max_display_size = layers
-		.iter()
-		.flat_map(|l| l.iter())
-		.map(|i| annotations_by_id.get(i).expect("exists"))
-		.map(|a| {
-			a.ranges
-				.ranges()
-				.last()
-				.expect("no range in annotation")
-				.end
-		})
-		.max()
-		.expect("layer is not empty");
-	apply_fixup(&mut max_display_size, &char_to_display);
-
-	let char_to_display = |mut offset: usize| {
-		apply_fixup(&mut offset, &char_to_display);
-		offset
-	};
-
-	let mut dummy_layers = 0;
-
-	let mut primary_annotation = None;
 	{
 		use crate::chars::single::*;
-		if opts.first_layer_reformats_orig {
-			dummy_layers += 1;
-			{
-				// Dummy
-				let fmtlayer = SegmentBuffer::new([Segment::new(
-					vec![' '; max_display_size + 1],
-					Formatting::default(),
-				)]);
-				layers_pre.push(fmtlayer);
-			}
-			for annotation in layers[0]
-				.iter()
-				.map(|i| annotations_by_id.get(i).expect("exists"))
-			{
-				if opts.allow_point_to_start && annotation.ranges.contains(start_whitespaces) {
-					primary_annotation = Some(annotation.id);
-				}
-
-				for range in annotation.ranges.ranges() {
-					// No need to use fixups
-					text.apply_meta(range.start..=range.end, &annotation.formatting);
-				}
-			}
-		}
-		for layer in layers.iter().skip(dummy_layers) {
+		for layer in per_line_ranges.iter() {
 			let mut fmtlayer = SegmentBuffer::new([Segment::new(
-				vec![' '; max_display_size + 1],
+				vec![' '; max_range_display + 1],
 				Formatting::default(),
 			)]);
 
+			let mut useless = true;
 			for annotation in layer
 				.iter()
 				.map(|i| annotations_by_id.get(i).expect("exists"))
@@ -166,6 +290,7 @@ pub(crate) fn generate_segment(
 							RANGE_CONTINUE,
 						);
 						out.push(RANGE_END);
+						useless = false;
 						out
 					};
 					fmtlayer.splice(
@@ -178,19 +303,20 @@ pub(crate) fn generate_segment(
 				}
 			}
 
-			layers_pre.push(fmtlayer);
+			let idx = range_fmt_layers.len();
+			range_fmt_layers.push(fmtlayer);
+			if useless {
+				useless_range_fmt_layers.push(idx);
+			}
 		}
 
 		// Draw crosses over other layers
-		for (i, layer) in layers.iter().enumerate() {
-			for other in layers_pre[i + 1..].iter_mut() {
+		for (i, layer) in per_line_ranges.iter().enumerate() {
+			for other in range_fmt_layers[i + 1..].iter_mut() {
 				for annotation in layer
 					.iter()
 					.map(|i| annotations_by_id.get(i).expect("exists"))
 				{
-					if primary_annotation == Some(annotation.id) {
-						continue;
-					}
 					for start in annotation.ranges.ranges().map(|r| r.start) {
 						let (c, orig_fmt) =
 							other.get(char_to_display(start)).expect("extended to max");
@@ -213,52 +339,46 @@ pub(crate) fn generate_segment(
 		}
 	}
 
-	let min_pos = layers
-		.iter()
-		.flat_map(|l| l.iter())
-		.map(|i| annotations_by_id.get(i).expect("exists"))
-		.map(|a| {
-			if primary_annotation == Some(a.id) {
-				start_whitespaces
-			} else {
+	annotations.sort_by_key(|a| {
+		(
+			a.right.is_empty(),
+			!a.left,
+			Reverse(a.ranges.ranges().next().expect("not empty").start),
+		)
+	});
+
+	let max_range_display = char_to_display(
+		annotations
+			.iter()
+			.map(|a| {
 				a.ranges
 					.ranges()
-					.next()
+					.last()
 					.expect("no range in annotation")
-					.start
-			}
+					.end
+			})
+			.max()
+			.expect("has annotation"),
+	);
+
+	let min_pos = annotations
+		.iter()
+		.map(|a| {
+			a.ranges
+				.ranges()
+				.next()
+				.expect("no range in annotation")
+				.start
 		})
 		.min()
-		.expect("layer is not empty");
-
-	if let Some(primary_annotation) = primary_annotation {
-		let id = annotations
-			.iter()
-			.position(|a| a.id == primary_annotation)
-			.expect("exists");
-		if annotations[id].right.is_empty() {
-			annotations.remove(id);
-		}
-	};
-
-	if opts.ratnest_sort {
-		annotations.shuffle(&mut rand::thread_rng());
-	} else {
-		annotations.sort_by_key(|a| {
-			(
-				a.right.is_empty(),
-				!a.left,
-				Reverse(a.ranges.ranges().next().expect("not empty").start),
-			)
-		});
-	}
+		.expect("has annotation");
 
 	let mut layers = Vec::new();
 	{
 		use crate::chars::arrow::*;
 		for annotation in &annotations {
 			let mut fmtlayer = SegmentBuffer::new([Segment::new(
-				vec![' '; max_display_size + 1],
+				vec![' '; max_range_display + 1],
 				Formatting::default(),
 			)]);
 			let mut extralayers = Vec::new();
@@ -266,13 +386,7 @@ pub(crate) fn generate_segment(
 			let starts = annotation
 				.ranges
 				.ranges()
-				.map(|r| {
-					if primary_annotation == Some(annotation.id) {
-						start_whitespaces.max(r.start)
-					} else {
-						r.start
-					}
-				})
+				.map(|r| r.start)
 				.collect::<Vec<_>>();
 
 			let mut min = usize::MAX;
@@ -282,9 +396,7 @@ pub(crate) fn generate_segment(
 				let last = i == starts.len() - 1;
 				min = min.min(*start);
 				max = max.max(*start);
-				let c = if primary_annotation == Some(annotation.id) {
-					ARROW_CONTINUE
-				} else if annotation.left && !annotation.right.is_empty() {
+				let c = if annotation.left && !annotation.right.is_empty() {
 					ARROW_RL
 				} else if annotation.left && last {
 					ARROW_L
@@ -321,9 +433,9 @@ pub(crate) fn generate_segment(
 			if !annotation.right.is_empty() {
 				let right = &annotation.right;
 
-				let size = max_display_size - char_to_display(max) + 2;
+				let size = max_range_display - char_to_display(max) + 2;
 				fmtlayer.splice(
-					char_to_display(max) + 1..max_display_size + 1,
+					char_to_display(max) + 1..max_range_display + 1,
 					Some(SegmentBuffer::new([Segment::new(
 						vec![ARROW_CONTINUE; size],
 						annotation.formatting.clone(),
@@ -334,7 +446,7 @@ pub(crate) fn generate_segment(
 				fmtlayer.extend(lines[0].clone());
 				for right in lines.iter().skip(1) {
 					let mut fmtlayer = SegmentBuffer::new([Segment::new(
-						vec![' '; max_display_size],
+						vec![' '; max_range_display],
 						Formatting::default(),
 					)]);
 					fmtlayer.extend(right.clone());
@@ -382,14 +494,17 @@ pub(crate) fn generate_segment(
 	}
 
 	let mut out = Vec::new();
-	for layer in layers_pre.iter().skip(dummy_layers) {
+	for (idx, layer) in range_fmt_layers.iter().enumerate() {
+		if useless_range_fmt_layers.contains(&idx) {
+			continue;
+		}
 		out.push((None, layer.clone()));
 	}
 	for layer in layers.iter().flatten() {
 		out.push(layer.clone())
 	}
 
-	((primary_annotation, text), out)
+	out
 }
 
 /*
@@ -404,6 +519,8 @@ TODO: optimize lines to left after multi-line to right texts:
 
 #[cfg(test)]
 mod tests {
+	use crate::anomaly_fixer::fixup_char_to_display;
+
 	use super::*;
 
 	fn default<T: Default>() -> T {
@@ -419,13 +536,13 @@ mod tests {
 		}
 		use range_map::Range;
 
-		let mut caid = 0;
+		let mut last_aid = 0;
 		let mut aid = || {
-			caid += 1;
-			AnnotationId(caid)
+			last_aid += 1;
+			AnnotationId(last_aid)
 		};
 
-		let out = generate_segment(
+		let out = generate_range_annotations(
 			vec![
 				LineAnnotation {
 					id: aid(),
@@ -470,13 +587,8 @@ mod tests {
 					right: Text::single("FooBar".chars(), default()),
 				},
 			],
-			Text::single("012345678901234567890123456789012345".chars(), default()),
-			&Opts {
-				ratnest_sort: true,
-				ratnest_merge: true,
-				first_layer_reformats_orig: true,
-				allow_point_to_start: false,
-			},
+			&fixup_char_to_display("012345678901234567890123456789012345".chars()),
+			&HashSet::new(),
 		);
 	}
 }

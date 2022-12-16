@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod segment;
 use annotation::{Annotation, AnnotationId, Opts};
-use anomaly_fixer::{apply_fixup, fixup_byte_to_char};
+use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 use formatting::Text;
 use range_map::{Range, RangeSet};
 use segment::{Segment, SegmentBuffer};
@@ -200,10 +200,25 @@ fn process(
 			.flat_map(Line::as_text_mut)
 			.filter(|t| !t.annotations.is_empty())
 		{
-			let ((primary_annotation, replace), extra) =
-				single_line::generate_segment(line.annotations.clone(), line.line.clone(), opts);
-			line.line = replace;
-			line.annotation = primary_annotation;
+			let hide_ranges_for = if opts.apply_to_orig {
+				let parsed = single_line::group_singleline(&line.annotations);
+				assert!(line.annotation.is_none());
+				line.annotation = parsed.annotation;
+				single_line::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
+
+				line.annotations
+					.retain(|a| !parsed.processed.contains(&a.id));
+				parsed.hide_ranges_for
+			} else {
+				HashSet::new()
+			};
+
+			let char_to_display_fixup = fixup_char_to_display(line.line.data().copied());
+			let extra = single_line::generate_range_annotations(
+				line.annotations.clone(),
+				&char_to_display_fixup,
+				&hide_ranges_for,
+			);
 			line.annotation_buffers = extra;
 			line.annotations.truncate(0);
 		}
@@ -292,7 +307,7 @@ fn process(
 				.map(|(k, v)| (*k, vec![v.range].into_iter().collect::<RangeSet<usize>>()))
 				.collect::<Vec<_>>();
 			grouped.sort_by_key(|a| a.1.num_elements());
-			let grouped = single_line::group_nonconflicting(grouped);
+			let grouped = single_line::group_nonconflicting(&grouped, &mut HashSet::new());
 
 			for group in grouped {
 				for annotation in group {
@@ -625,11 +640,15 @@ mod tests {
 					ranges: [Range::new(2838, 2847)].into_iter().collect(),
 					text: Text::single("Conflict".chars(), default()),
 				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x19af15),
+					ranges: [Range::new(2839, 2846)].into_iter().collect(),
+					text: Text::single("Still has text".chars(), default()),
+				},
 			],
 			&Opts {
-				first_layer_reformats_orig: true,
-				allow_point_to_start: true,
-				..default()
+				apply_to_orig: true,
 			},
 		);
 
@@ -661,9 +680,7 @@ mod tests {
 				},
 			],
 			&Opts {
-				first_layer_reformats_orig: false,
-				allow_point_to_start: false,
-				..default()
+				apply_to_orig: false,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
@@ -693,9 +710,55 @@ mod tests {
 				},
 			],
 			&Opts {
-				first_layer_reformats_orig: true,
-				allow_point_to_start: false,
-				..default()
+				apply_to_orig: true,
+			},
+		);
+		println!("{}", source_to_ansi(&s))
+	}
+
+	#[test]
+	fn example_from_annotate_snippets() {
+		let s = parse(
+			r#") -> Option<String> {
+    for ann in annotations {
+        match (ann.range.0, ann.range.1) {
+            (None, None) => continue,
+            (Some(start), Some(end)) if start > end_index => continue,
+            (Some(start), Some(end)) if start >= start_index => {
+                let label = if let Some(ref label) = ann.label {
+                    format!(" {}", label)
+                } else {
+                    String::from("")
+                };
+                return Some(format!(
+                    "{}{}{}",
+                    " ".repeat(start - start_index),
+                    "^".repeat(end - start),
+                    label
+                ));
+            }
+            _ => continue,
+        }
+    }"#,
+			&[
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0xff000000),
+					ranges: [Range::new(5, 18)].into_iter().collect(),
+					text: Text::single(
+						"expected `Option<String>` because of return type".chars(),
+						default(),
+					),
+				},
+				Annotation {
+					priority: 0,
+					formatting: Formatting::color(0x00ff0000),
+					ranges: [Range::new(26, 723)].into_iter().collect(),
+					text: Text::single("expected enum `std::option::Option`".chars(), default()),
+				},
+			],
+			&Opts {
+				apply_to_orig: true,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
