@@ -16,7 +16,7 @@ use crate::{
 
 /// This kind of annotations is not used directly, instead library creates those
 #[derive(Debug, Clone)]
-pub struct LineAnnotation {
+pub(crate) struct LineAnnotation {
 	pub id: AnnotationId,
 	pub priority: usize,
 	pub ranges: RangeSet<usize>,
@@ -32,7 +32,7 @@ pub struct LineAnnotation {
 /// In single layer, no annotation range conflicts will occur
 ///
 /// Sorting order is not determined, and depends on sorting of original array
-pub fn group_nonconflicting<T: PrimInt + fmt::Debug>(
+pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 	annotations: Vec<(AnnotationId, RangeSet<T>)>,
 ) -> Vec<Vec<AnnotationId>> {
 	let mut layers = vec![];
@@ -63,7 +63,7 @@ pub fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 }
 
 #[allow(dead_code)]
-pub fn generate_segment(
+pub(crate) fn generate_segment(
 	mut annotations: Vec<LineAnnotation>,
 	mut text: Text,
 	opts: &Opts,
@@ -150,7 +150,7 @@ pub fn generate_segment(
 						vec![CONTINUE]
 					} else {
 						let mut out = vec![RANGE_START];
-						out.resize(range.end, RANGE_CONTINUE);
+						out.resize(range.end - range.start, RANGE_CONTINUE);
 						out.push(RANGE_END);
 						out
 					};
@@ -350,8 +350,6 @@ TODO: optimize lines to left after multi-line to right texts:
 
 #[cfg(test)]
 mod tests {
-	use crate::annotation::AnnotationIdAllocator;
-
 	use super::*;
 
 	fn default<T: Default>() -> T {
@@ -367,11 +365,16 @@ mod tests {
 		}
 		use range_map::Range;
 
-		let mut aid = AnnotationIdAllocator::new();
+		let mut caid = 0;
+		let mut aid = || {
+			caid += 1;
+			AnnotationId(caid)
+		};
+
 		generate_segment(
 			vec![
 				LineAnnotation {
-					id: aid.next(),
+					id: aid(),
 					priority: 0,
 					ranges: vec![Range::new(3usize, 6), Range::new(8usize, 10)]
 						.into_iter()
@@ -381,7 +384,7 @@ mod tests {
 					right: Text::single("Foo".chars(), default()),
 				},
 				LineAnnotation {
-					id: aid.next(),
+					id: aid(),
 					priority: 0,
 					ranges: vec![Range::new(3usize, 10)].into_iter().collect(),
 					formatting: gen_color(1),
@@ -389,7 +392,7 @@ mod tests {
 					right: Text::single("Bar".chars(), default()),
 				},
 				LineAnnotation {
-					id: aid.next(),
+					id: aid(),
 					priority: 1,
 					ranges: vec![Range::new(7usize, 7)].into_iter().collect(),
 					formatting: gen_color(2),
@@ -397,7 +400,7 @@ mod tests {
 					right: Text::single("Baz\nLine2".chars(), default()),
 				},
 				LineAnnotation {
-					id: aid.next(),
+					id: aid(),
 					priority: 0,
 					ranges: vec![Range::new(12usize, 17)].into_iter().collect(),
 					formatting: gen_color(3),
@@ -405,7 +408,7 @@ mod tests {
 					right: Text::empty(),
 				},
 				LineAnnotation {
-					id: aid.next(),
+					id: aid(),
 					priority: 0,
 					ranges: vec![Range::new(11usize, 14)].into_iter().collect(),
 					formatting: gen_color(4),
