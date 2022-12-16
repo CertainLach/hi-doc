@@ -6,11 +6,13 @@ use crate::formatting::{Formatting, Text};
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub(crate) struct AnnotationId(pub usize);
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct Opts {
 	/// For primary ranges, instead of creating line with range annotaions,
 	/// apply range colors directly to source string. Only useable with colors
 	pub apply_to_orig: bool,
+	/// Allow hiding source lines containing no annotations
+	pub fold: bool,
 }
 
 #[derive(Clone)]

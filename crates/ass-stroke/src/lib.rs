@@ -37,6 +37,8 @@ struct TextLine {
 	prefix: Text,
 	line_num: usize,
 	line: Text,
+	/// Is this line allowed to be hidden by fold?
+	fold: bool,
 	annotation: Option<AnnotationId>,
 	annotations: Vec<LineAnnotation>,
 	annotation_buffers: Vec<(Option<AnnotationId>, Text)>,
@@ -208,6 +210,8 @@ fn process(
 
 				line.annotations
 					.retain(|a| !parsed.processed.contains(&a.id));
+				line.fold = false;
+
 				parsed.hide_ranges_for
 			} else {
 				HashSet::new()
@@ -224,27 +228,29 @@ fn process(
 		}
 	}
 	// Make gaps in files
-	for slice in cons_slices(&mut source.lines, Line::is_text) {
-		'line: for i in 0..slice.len() {
-			for j in i.saturating_sub(2)..(i + 3) {
-				let Some(ctx) = slice.get(j) else {
-					continue;
-				};
-				let Line::Text(t) = ctx else {
-					continue;
-				};
-				if t.annotation_buffers.is_empty() && t.annotation.is_none() {
-					continue;
+	if opts.fold {
+		for slice in cons_slices(&mut source.lines, Line::is_text) {
+			'line: for i in 0..slice.len() {
+				for j in i.saturating_sub(2)..(i + 3) {
+					let Some(ctx) = slice.get(j) else {
+						continue;
+					};
+					let Line::Text(t) = ctx else {
+						continue;
+					};
+					if t.fold {
+						continue;
+					}
+					continue 'line;
 				}
-				continue 'line;
+				slice[i] = Line::Gap(GapLine {
+					prefix: Text::new([]),
+					line: Text::new([]),
+				});
 			}
-			slice[i] = Line::Gap(GapLine {
-				prefix: Text::new([]),
-				line: Text::new([]),
-			});
 		}
+		cleanup(source);
 	}
-	cleanup(source);
 
 	// Expand annotation buffers
 	{
@@ -307,7 +313,7 @@ fn process(
 				.map(|(k, v)| (*k, vec![v.range].into_iter().collect::<RangeSet<usize>>()))
 				.collect::<Vec<_>>();
 			grouped.sort_by_key(|a| a.1.num_elements());
-			let grouped = single_line::group_nonconflicting(&grouped, &mut HashSet::new());
+			let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
 
 			for group in grouped {
 				for annotation in group {
@@ -536,6 +542,7 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 			prefix: SegmentBuffer::new([]),
 			annotations: Vec::new(),
 			annotation_buffers: Vec::new(),
+			fold: true,
 		})
 		.map(Line::Text)
 		.collect();
@@ -582,7 +589,8 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 				} else {
 					Text::empty()
 				},
-			})
+			});
+			line.fold = false;
 		}
 	}
 
@@ -649,6 +657,7 @@ mod tests {
 			],
 			&Opts {
 				apply_to_orig: true,
+				fold: true,
 			},
 		);
 
@@ -681,6 +690,7 @@ mod tests {
 			],
 			&Opts {
 				apply_to_orig: false,
+				fold: true,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
@@ -711,6 +721,7 @@ mod tests {
 			],
 			&Opts {
 				apply_to_orig: true,
+				fold: true,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
@@ -759,6 +770,7 @@ mod tests {
 			],
 			&Opts {
 				apply_to_orig: true,
+				fold: true,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
