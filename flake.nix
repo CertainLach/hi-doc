@@ -26,6 +26,7 @@
             rust
             cargo-edit
             lld
+            asciinema
           ];
         };
       }
