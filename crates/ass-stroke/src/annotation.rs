@@ -14,6 +14,9 @@ pub struct Opts {
 	/// Allow hiding source lines containing no annotations
 	pub fold: bool,
 	pub tab_width: usize,
+
+	/// Minimum lines of code above and below annotated line
+	pub context_lines: usize,
 }
 
 #[derive(Clone)]

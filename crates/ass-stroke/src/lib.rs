@@ -195,6 +195,30 @@ fn cleanup(source: &mut Source) {
 	cleanup_nops(source);
 }
 
+fn fold(source: &mut Source, opts: &Opts) {
+	for slice in cons_slices(&mut source.lines, Line::is_text) {
+		'line: for i in 0..slice.len() {
+			for j in i.saturating_sub(opts.context_lines)..=(i + opts.context_lines) {
+				let Some(ctx) = slice.get(j) else {
+						continue;
+					};
+				let Line::Text(t) = ctx else {
+						continue;
+					};
+				if t.fold {
+					continue;
+				}
+				continue 'line;
+			}
+			slice[i] = Line::Gap(GapLine {
+				prefix: Text::new([]),
+				line: Text::new([]),
+			});
+		}
+	}
+	cleanup(source);
+}
+
 fn process(
 	source: &mut Source,
 	annotation_formats: HashMap<AnnotationId, Formatting>,
@@ -238,27 +262,7 @@ fn process(
 	}
 	// Make gaps in files
 	if opts.fold {
-		for slice in cons_slices(&mut source.lines, Line::is_text) {
-			'line: for i in 0..slice.len() {
-				for j in i.saturating_sub(2)..(i + 3) {
-					let Some(ctx) = slice.get(j) else {
-						continue;
-					};
-					let Line::Text(t) = ctx else {
-						continue;
-					};
-					if t.fold {
-						continue;
-					}
-					continue 'line;
-				}
-				slice[i] = Line::Gap(GapLine {
-					prefix: Text::new([]),
-					line: Text::new([]),
-				});
-			}
-		}
-		cleanup(source);
+		fold(source, opts)
 	}
 
 	// Expand annotation buffers
@@ -732,6 +736,7 @@ impl SnippetBuilder {
 				apply_to_orig: true,
 				fold: true,
 				tab_width: 4,
+				context_lines: 2,
 			},
 		)
 	}
@@ -875,6 +880,7 @@ mod tests {
 				apply_to_orig: true,
 				fold: true,
 				tab_width: 4,
+				context_lines: 2,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
@@ -902,6 +908,7 @@ mod tests {
 				apply_to_orig: false,
 				fold: false,
 				tab_width: 4,
+				context_lines: 2,
 			},
 		);
 		println!("{}", source_to_ansi(&s))
