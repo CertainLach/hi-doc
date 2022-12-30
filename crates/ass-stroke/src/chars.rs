@@ -1,6 +1,7 @@
 //! Definitions of used formatting characters and how to act when they are overlapped during formatting
 
-pub mod line {
+/// Line connections
+pub(crate) mod line {
 	pub const CONTINUE: char = '─';
 	pub const CONTINUE_CROSS: char = '━';
 
@@ -56,88 +57,132 @@ pub mod line {
 	}
 }
 
+/// Lines from range to annotation text/line connection
 pub mod arrow {
-	pub const CONTINUE: char = '│';
-	pub const CONTINUE_CROSS: char = '┃';
+	pub struct Chars {
+		pub cont: char,
+		pub cont_x: char,
+		pub arrow_rl: char,
+		pub arrow_rl_x: char,
+		pub arrow_rl_x_x: char,
+		pub arrow_l: char,
+		pub arrow_l_x: char,
+		pub arrow_l_x_x: char,
+		pub arrow_r: char,
+		pub arrow_r_x: char,
+		pub arrow_r_x_x: char,
+		pub arrow_cont: char,
+		pub arrow_cont_x: char,
+		pub arrow_cont_x_x: char,
+		pub arrow_inline: char,
+	}
+	pub static BOTTOM: Chars = Chars {
+		cont: '│',
+		cont_x: '┃',
+		arrow_rl: '┴',
+		arrow_rl_x: '╀',
+		arrow_rl_x_x: '╂',
+		arrow_l: '╯',
+		arrow_l_x: '┦',
+		arrow_l_x_x: '┨',
+		arrow_r: '╰',
+		arrow_r_x: '┞',
+		arrow_r_x_x: '┠',
+		arrow_cont: '─',
+		arrow_cont_x: '┼',
+		arrow_cont_x_x: '╂',
+		arrow_inline: '🢒',
+	};
+	pub static TOP: Chars = Chars {
+		arrow_rl: '┬',
+		arrow_rl_x: '╁',
+		arrow_l: '╮',
+		arrow_l_x: '┧',
+		arrow_r: '╭',
+		arrow_r_x: '┟',
+		..BOTTOM
+	};
 
-	pub const ARROW_RL: char = '┴';
-	pub const ARROW_RL_CROSS: char = '╀';
-	pub const ARROW_RL_CROSS_CROSS: char = '╂';
-
-	pub const ARROW_L: char = '╯';
-	pub const ARROW_L_CROSS: char = '┦';
-	pub const ARROW_L_CROSS_CROSS: char = '┨';
-
-	pub const ARROW_R: char = '╰';
-	pub const ARROW_R_CROSS: char = '┞';
-	pub const ARROW_R_CROSS_CROSS: char = '┠';
-
-	pub const ARROW_CONTINUE: char = '─';
-	pub const ARROW_CONTINUE_CROSS: char = '┼';
-	pub const ARROW_CONTINUE_CROSS_CROSS: char = '╂';
-
-	pub const ARROW_INLINE: char = '🢒';
-
-	pub fn cross(char: char) -> Option<(bool, char)> {
+	pub fn cross(chars: &Chars, char: char) -> Option<(bool, char)> {
 		match char {
-			CONTINUE => Some((true, CONTINUE_CROSS)),
-			CONTINUE_CROSS => None,
+			x if x == chars.cont => Some((true, chars.cont_x)),
+			x if x == chars.cont_x => None,
 
-			ARROW_CONTINUE => Some((false, ARROW_CONTINUE_CROSS)),
-			ARROW_CONTINUE_CROSS => Some((true, ARROW_CONTINUE_CROSS_CROSS)),
+			x if x == chars.arrow_cont => Some((false, chars.arrow_cont_x)),
+			x if x == chars.arrow_cont_x => Some((true, chars.arrow_cont_x_x)),
 			#[allow(unreachable_patterns)]
-			ARROW_CONTINUE_CROSS_CROSS | ARROW_RL_CROSS_CROSS => None,
+			x if x == chars.arrow_cont_x_x || x == chars.arrow_rl_x_x => None,
 
-			ARROW_R => Some((false, ARROW_R_CROSS)),
-			ARROW_R_CROSS => Some((true, ARROW_R_CROSS_CROSS)),
-			ARROW_R_CROSS_CROSS => None,
+			x if x == chars.arrow_r => Some((false, chars.arrow_r_x)),
+			x if x == chars.arrow_r_x => Some((true, chars.arrow_r_x_x)),
+			x if x == chars.arrow_r_x_x => None,
 
-			ARROW_L => Some((false, ARROW_L_CROSS)),
-			ARROW_L_CROSS => Some((true, ARROW_L_CROSS_CROSS)),
-			ARROW_L_CROSS_CROSS => None,
+			x if x == chars.arrow_l => Some((false, chars.arrow_l_x)),
+			x if x == chars.arrow_l_x => Some((true, chars.arrow_l_x_x)),
+			x if x == chars.arrow_l_x_x => None,
 
-			ARROW_RL => Some((false, ARROW_RL_CROSS)),
-			ARROW_RL_CROSS => Some((true, ARROW_RL_CROSS_CROSS)),
+			x if x == chars.arrow_rl => Some((false, chars.arrow_rl_x)),
+			x if x == chars.arrow_rl_x => Some((true, chars.arrow_rl_x_x)),
 
-			' ' => Some((false, CONTINUE)),
+			' ' => Some((false, chars.cont)),
 
 			c => unreachable!("{c:?}"),
 		}
 	}
 }
 
-pub mod single {
-	pub const CONTINUE: char = '│';
-	pub const CONTINUE_CROSS: char = '┃';
+/// Ranges
+pub(crate) mod single {
+	pub struct Chars {
+		pub cont: char,
+		pub cont_x: char,
+		pub range_start: char,
+		pub range_start_x: char,
+		pub range_cont: char,
+		pub range_cont_x: char,
+		pub range_cont_x_x: char,
+		pub range_end: char,
+		pub range_end_x: char,
+		pub range_end_x_x: char,
+	}
+	pub static BOTTOM: Chars = Chars {
+		cont: '│',
+		cont_x: '┃',
 
-	pub const RANGE_START: char = '├';
-	pub const RANGE_START_CROSS: char = '┠';
+		range_start: '├',
+		range_start_x: '┠',
 
-	pub const RANGE_CONTINUE: char = '─';
-	pub const RANGE_CONTINUE_CROSS: char = '┼';
-	pub const RANGE_CONTINUE_CROSS_CROSS: char = '╂';
+		range_cont: '─',
+		range_cont_x: '┼',
+		range_cont_x_x: '╂',
 
-	pub const RANGE_END: char = '╯';
-	pub const RANGE_END_CROSS: char = '┦';
-	pub const RANGE_END_CROSS_CROSS: char = '┨';
+		range_end: '╯',
+		range_end_x: '┦',
+		range_end_x_x: '┨',
+	};
+	pub static TOP: Chars = Chars {
+		range_end: '╮',
+		range_end_x: '┧',
+		..BOTTOM
+	};
 
-	pub fn cross(char: char) -> Option<(bool, char)> {
+	pub fn cross(chars: &Chars, char: char) -> Option<(bool, char)> {
 		match char {
-			CONTINUE => Some((true, CONTINUE_CROSS)),
-			CONTINUE_CROSS => None,
+			x if x == chars.cont => Some((true, chars.cont_x)),
+			x if x == chars.cont_x => None,
 
-			RANGE_START => Some((true, RANGE_START_CROSS)),
-			RANGE_START_CROSS => None,
+			x if x == chars.range_start => Some((true, chars.range_start_x)),
+			x if x == chars.range_start_x => None,
 
-			RANGE_CONTINUE => Some((false, RANGE_CONTINUE_CROSS)),
-			RANGE_CONTINUE_CROSS => Some((true, RANGE_CONTINUE_CROSS_CROSS)),
-			RANGE_CONTINUE_CROSS_CROSS => None,
+			x if x == chars.range_cont => Some((false, chars.range_cont_x)),
+			x if x == chars.range_cont_x => Some((true, chars.range_cont_x_x)),
+			x if x == chars.range_cont_x_x => None,
 
-			RANGE_END => Some((true, RANGE_END_CROSS)),
-			RANGE_END_CROSS => Some((true, RANGE_END_CROSS_CROSS)),
-			RANGE_END_CROSS_CROSS => None,
+			x if x == chars.range_end => Some((true, chars.range_end_x)),
+			x if x == chars.range_end_x => Some((true, chars.range_end_x_x)),
+			x if x == chars.range_end_x_x => None,
 
-			' ' => Some((false, CONTINUE)),
+			' ' => Some((false, chars.cont)),
 
 			c => unreachable!("{c:?}"),
 		}
