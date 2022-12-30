@@ -219,53 +219,221 @@ fn fold(source: &mut Source, opts: &Opts) {
 	cleanup(source);
 }
 
-fn process(
-	source: &mut Source,
-	annotation_formats: HashMap<AnnotationId, Formatting>,
-	opts: &Opts,
-) {
-	cleanup(source);
-	// Format inline annotations
-	{
-		for line in source
-			.lines
-			.iter_mut()
-			.flat_map(Line::as_text_mut)
-			.filter(|t| !t.annotations.is_empty())
-		{
-			let hide_ranges_for = if opts.apply_to_orig {
-				let parsed = inline::group_singleline(&line.annotations);
-				assert!(line.annotation.is_none());
-				line.annotation = parsed.annotation;
-				inline::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
-
-				line.annotations
-					.retain(|a| !parsed.processed.contains(&a.id));
-				line.fold = false;
-
-				parsed.hide_ranges_for
-			} else {
-				HashSet::new()
-			};
-
-			let char_to_display_fixup = fixup_char_to_display(line.line.data().copied());
-			let mut extra = single_line::generate_range_annotations(
-				line.annotations.clone(),
-				&char_to_display_fixup,
-				&hide_ranges_for,
-				false,
-			);
-			extra.reverse();
-			line.top_annotations = extra;
-			line.annotations.truncate(0);
+fn draw_line_numbers(source: &mut Source) {
+	for lines in &mut cons_slices(&mut source.lines, |l| {
+		l.is_annotation() || l.is_text() || l.is_gap()
+	}) {
+		let max_num = lines
+			.iter()
+			.filter_map(|l| match l {
+				Line::Text(t) => Some(t.line_num),
+				_ => None,
+			})
+			.max()
+			.unwrap_or(0);
+		let max_len = max_num.to_string().len();
+		let prefix_segment = Segment::new(vec![' '; max_len - 1], Formatting::line_number());
+		for line in lines.iter_mut() {
+			match line {
+				Line::Text(t) => t.prefix.extend(SegmentBuffer::new([Segment::new(
+					format!("{:>width$} ", t.line_num, width = max_len).chars(),
+					Formatting::line_number(),
+				)])),
+				Line::Annotation(a) => a.prefix.extend(SegmentBuffer::new([
+					prefix_segment.clone(),
+					Segment::new(['·', ' '], Formatting::line_number()),
+				])),
+				Line::Gap(a) => a.prefix.extend(SegmentBuffer::new([
+					prefix_segment.clone(),
+					Segment::new(['⋮', ' '], Formatting::line_number()),
+				])),
+				_ => unreachable!(),
+			}
 		}
 	}
-	// Make gaps in files
-	if opts.fold {
-		fold(source, opts)
-	}
+}
 
-	// Expand annotation buffers
+fn draw_line_connections(
+	source: &mut Source,
+	annotation_formats: HashMap<AnnotationId, Formatting>,
+) {
+	for lines in &mut cons_slices(&mut source.lines, |l| {
+		l.is_annotation() || l.is_text() || l.is_gap()
+	}) {
+		#[derive(Debug)]
+		struct Connection {
+			range: Range<usize>,
+			connected: Vec<usize>,
+		}
+
+		let mut connected_annotations = HashMap::new();
+		for (i, line) in lines.iter().enumerate() {
+			let annotation = if let Some(annotation) = line.as_annotation() {
+				annotation.annotation
+			} else if let Some(text) = line.as_text() {
+				text.annotation
+			} else {
+				None
+			};
+			if let Some(annotation) = annotation {
+				let conn = connected_annotations
+					.entry(annotation)
+					.or_insert(Connection {
+						range: Range::new(i, i),
+						connected: Vec::new(),
+					});
+				conn.range.start = conn.range.start.min(i);
+				conn.range.end = conn.range.end.max(i);
+				conn.connected.push(i);
+			}
+		}
+		let mut grouped = connected_annotations
+			.iter()
+			.map(|(k, v)| (*k, vec![v.range].into_iter().collect::<RangeSet<usize>>()))
+			.collect::<Vec<_>>();
+
+		grouped.sort_by_key(|a| a.1.num_elements());
+		let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
+
+		for group in grouped {
+			for annotation in group {
+				let annotation_fmt = annotation_formats
+					.get(&annotation)
+					.expect("id is used in string but not defined")
+					.clone()
+					.decoration();
+				let conn = connected_annotations.get(&annotation).expect("exists");
+				let range = conn.range;
+				let mut max_index = usize::MAX;
+				for line in range.start..=range.end {
+					match &lines[line] {
+						Line::Text(t) if t.line.data().all(|c| c.is_whitespace()) => {}
+						Line::Text(t) => {
+							let whitespaces =
+								t.line.data().take_while(|i| i.is_whitespace()).count();
+							max_index = max_index.min(whitespaces)
+						}
+						Line::Annotation(t) if t.line.data().all(|c| c.is_whitespace()) => {}
+						Line::Annotation(t) => {
+							let whitespaces =
+								t.line.data().take_while(|i| i.is_whitespace()).count();
+							max_index = max_index.min(whitespaces)
+						}
+						Line::Gap(_) => {}
+						_ => unreachable!(),
+					}
+				}
+				while max_index < 2 {
+					let seg = Some(SegmentBuffer::new([Segment::new(
+						vec![' '; 2 - max_index],
+						annotation_fmt.clone(),
+					)]));
+					for line in lines.iter_mut() {
+						match line {
+							Line::Text(t) => t.line.splice(0..0, seg.clone()),
+							Line::Annotation(t) => t.line.splice(0..0, seg.clone()),
+							Line::Gap(t) => t.line.splice(0..0, seg.clone()),
+							_ => unreachable!(),
+						}
+					}
+					max_index = 2;
+				}
+				if max_index >= 2 {
+					let offset = max_index - 2;
+
+					for line in range.start..=range.end {
+						use chars::line::*;
+						let char = if range.start == range.end {
+							RANGE_EMPTY
+						} else if line == range.start {
+							RANGE_START
+						} else if line == range.end {
+							RANGE_END
+						} else if conn.connected.contains(&line) {
+							RANGE_CONNECTION
+						} else {
+							RANGE_CONTINUE
+						};
+						let text = lines[line].text_mut().expect("only with text reachable");
+						if text.len() <= offset {
+							text.resize(offset + 1, ' ', annotation_fmt.clone());
+						}
+						text.splice(
+							offset..=offset,
+							Some(SegmentBuffer::new([Segment::new(
+								[char],
+								annotation_fmt.clone(),
+							)])),
+						);
+
+						if conn.connected.contains(&line) {
+							for i in offset + 1..text.len() {
+								let (char, fmt) = text.get(i).expect("in bounds");
+								if !text.get(i).expect("in bounds").0.is_whitespace()
+									&& !fmt.decoration
+								{
+									break;
+								}
+								if let Some((keep_style, replacement)) = cross(char) {
+									text.splice(
+										i..=i,
+										Some(SegmentBuffer::new([Segment::new(
+											[replacement],
+											if keep_style {
+												fmt
+											} else {
+												annotation_fmt.clone()
+											},
+										)])),
+									)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+fn generate_annotations(source: &mut Source, opts: &Opts) {
+	for line in source
+		.lines
+		.iter_mut()
+		.flat_map(Line::as_text_mut)
+		.filter(|t| !t.annotations.is_empty())
+	{
+		let hide_ranges_for = if opts.apply_to_orig {
+			let parsed = inline::group_singleline(&line.annotations);
+			assert!(line.annotation.is_none());
+			line.annotation = parsed.annotation;
+			inline::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
+
+			line.annotations
+				.retain(|a| !parsed.processed.contains(&a.id));
+			line.fold = false;
+
+			parsed.hide_ranges_for
+		} else {
+			HashSet::new()
+		};
+
+		let char_to_display_fixup = fixup_char_to_display(line.line.data().copied());
+		let mut extra = single_line::generate_range_annotations(
+			line.annotations.clone(),
+			&char_to_display_fixup,
+			&hide_ranges_for,
+			false,
+		);
+		extra.reverse();
+		// TODO: instead of writing generated annotations into lines, return them from this function, and apply later
+		line.top_annotations = extra;
+		line.annotations.truncate(0);
+	}
+}
+
+fn apply_annotations(source: &mut Source) {
+	// Top
 	{
 		let mut insertions = vec![];
 		for (i, line) in source
@@ -290,6 +458,7 @@ fn process(
 			);
 		}
 	}
+	// Bottom
 	{
 		let mut insertions = vec![];
 		for (i, line) in source
@@ -314,180 +483,26 @@ fn process(
 			);
 		}
 	}
+}
+
+fn process(
+	source: &mut Source,
+	annotation_formats: HashMap<AnnotationId, Formatting>,
+	opts: &Opts,
+) {
+	cleanup(source);
+	// Format inline annotations
+	generate_annotations(source, opts);
+	// Make gaps in files
+	if opts.fold {
+		fold(source, opts)
+	}
+	// Expand annotation buffers
+	apply_annotations(source);
 	// Connect annotation lines
-	{
-		for lines in &mut cons_slices(&mut source.lines, |l| {
-			l.is_annotation() || l.is_text() || l.is_gap()
-		}) {
-			#[derive(Debug)]
-			struct Connection {
-				range: Range<usize>,
-				connected: Vec<usize>,
-			}
-
-			let mut connected_annotations = HashMap::new();
-			for (i, line) in lines.iter().enumerate() {
-				let annotation = if let Some(annotation) = line.as_annotation() {
-					annotation.annotation
-				} else if let Some(text) = line.as_text() {
-					text.annotation
-				} else {
-					None
-				};
-				if let Some(annotation) = annotation {
-					let conn = connected_annotations
-						.entry(annotation)
-						.or_insert(Connection {
-							range: Range::new(i, i),
-							connected: Vec::new(),
-						});
-					conn.range.start = conn.range.start.min(i);
-					conn.range.end = conn.range.end.max(i);
-					conn.connected.push(i);
-				}
-			}
-			let mut grouped = connected_annotations
-				.iter()
-				.map(|(k, v)| (*k, vec![v.range].into_iter().collect::<RangeSet<usize>>()))
-				.collect::<Vec<_>>();
-
-			grouped.sort_by_key(|a| a.1.num_elements());
-			let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
-
-			for group in grouped {
-				for annotation in group {
-					let annotation_fmt = annotation_formats
-						.get(&annotation)
-						.expect("id is used in string but not defined")
-						.clone()
-						.decoration();
-					let conn = connected_annotations.get(&annotation).expect("exists");
-					let range = conn.range;
-					let mut max_index = usize::MAX;
-					for line in range.start..=range.end {
-						match &lines[line] {
-							Line::Text(t) if t.line.data().all(|c| c.is_whitespace()) => {}
-							Line::Text(t) => {
-								let whitespaces =
-									t.line.data().take_while(|i| i.is_whitespace()).count();
-								max_index = max_index.min(whitespaces)
-							}
-							Line::Annotation(t) if t.line.data().all(|c| c.is_whitespace()) => {}
-							Line::Annotation(t) => {
-								let whitespaces =
-									t.line.data().take_while(|i| i.is_whitespace()).count();
-								max_index = max_index.min(whitespaces)
-							}
-							Line::Gap(_) => {}
-							_ => unreachable!(),
-						}
-					}
-					while max_index < 2 {
-						let seg = Some(SegmentBuffer::new([Segment::new(
-							vec![' '; 2 - max_index],
-							annotation_fmt.clone(),
-						)]));
-						for line in lines.iter_mut() {
-							match line {
-								Line::Text(t) => t.line.splice(0..0, seg.clone()),
-								Line::Annotation(t) => t.line.splice(0..0, seg.clone()),
-								Line::Gap(t) => t.line.splice(0..0, seg.clone()),
-								_ => unreachable!(),
-							}
-						}
-						max_index = 2;
-					}
-					if max_index >= 2 {
-						let offset = max_index - 2;
-
-						for line in range.start..=range.end {
-							use chars::line::*;
-							let char = if range.start == range.end {
-								RANGE_EMPTY
-							} else if line == range.start {
-								RANGE_START
-							} else if line == range.end {
-								RANGE_END
-							} else if conn.connected.contains(&line) {
-								RANGE_CONNECTION
-							} else {
-								RANGE_CONTINUE
-							};
-							let text = lines[line].text_mut().expect("only with text reachable");
-							if text.len() <= offset {
-								text.resize(offset + 1, ' ', annotation_fmt.clone());
-							}
-							text.splice(
-								offset..=offset,
-								Some(SegmentBuffer::new([Segment::new(
-									[char],
-									annotation_fmt.clone(),
-								)])),
-							);
-
-							if conn.connected.contains(&line) {
-								for i in offset + 1..text.len() {
-									let (char, fmt) = text.get(i).expect("in bounds");
-									if !text.get(i).expect("in bounds").0.is_whitespace()
-										&& !fmt.decoration
-									{
-										break;
-									}
-									if let Some((keep_style, replacement)) = cross(char) {
-										text.splice(
-											i..=i,
-											Some(SegmentBuffer::new([Segment::new(
-												[replacement],
-												if keep_style {
-													fmt
-												} else {
-													annotation_fmt.clone()
-												},
-											)])),
-										)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+	draw_line_connections(source, annotation_formats);
 	// Apply line numbers
-	{
-		for lines in &mut cons_slices(&mut source.lines, |l| {
-			l.is_annotation() || l.is_text() || l.is_gap()
-		}) {
-			let max_num = lines
-				.iter()
-				.filter_map(|l| match l {
-					Line::Text(t) => Some(t.line_num),
-					_ => None,
-				})
-				.max()
-				.unwrap_or(0);
-			let max_len = max_num.to_string().len();
-			let prefix_segment = Segment::new(vec![' '; max_len - 1], Formatting::line_number());
-			for line in lines.iter_mut() {
-				match line {
-					Line::Text(t) => t.prefix.extend(SegmentBuffer::new([Segment::new(
-						format!("{:>width$} ", t.line_num, width = max_len).chars(),
-						Formatting::line_number(),
-					)])),
-					Line::Annotation(a) => a.prefix.extend(SegmentBuffer::new([
-						prefix_segment.clone(),
-						Segment::new(['·', ' '], Formatting::line_number()),
-					])),
-					Line::Gap(a) => a.prefix.extend(SegmentBuffer::new([
-						prefix_segment.clone(),
-						Segment::new(['⋮', ' '], Formatting::line_number()),
-					])),
-					_ => unreachable!(),
-				}
-			}
-		}
-	}
+	draw_line_numbers(source);
 	// To raw
 	{
 		for line in &mut source.lines {
