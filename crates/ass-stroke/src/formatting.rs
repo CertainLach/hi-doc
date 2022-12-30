@@ -34,6 +34,16 @@ impl MetaApply<Formatting> for Formatting {
 	}
 }
 
+pub struct AddColorToUncolored(pub u32);
+impl MetaApply<AddColorToUncolored> for Formatting {
+	fn apply(&mut self, change: &AddColorToUncolored) {
+		if self.color.is_some() {
+			return;
+		}
+		self.color = Some(change.0);
+	}
+}
+
 impl Formatting {
 	pub fn line_number() -> Self {
 		Self {
@@ -47,6 +57,9 @@ impl Formatting {
 			color: Some(color),
 			..Default::default()
 		}
+	}
+	pub fn rgb([r, g, b]: [u8; 3]) -> Self {
+		Self::color(u32::from_be_bytes([r, g, b, 0]))
 	}
 
 	pub fn decoration(mut self) -> Self {

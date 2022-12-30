@@ -1,9 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+	collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+	ops::RangeInclusive,
+};
 
 mod segment;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
-use formatting::Text;
+use formatting::{AddColorToUncolored, Text};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
+use random_color::{Color, Luminosity, RandomColor};
 use range_map::{Range, RangeSet};
 use segment::{Segment, SegmentBuffer};
 use single_line::LineAnnotation;
@@ -14,6 +19,7 @@ mod annotation;
 mod anomaly_fixer;
 mod chars;
 mod formatting;
+mod inline;
 mod single_line;
 
 #[derive(Clone)]
@@ -41,12 +47,13 @@ struct TextLine {
 	fold: bool,
 	annotation: Option<AnnotationId>,
 	annotations: Vec<LineAnnotation>,
-	annotation_buffers: Vec<(Option<AnnotationId>, Text)>,
+	top_annotations: Vec<(Option<AnnotationId>, Text)>,
+	bottom_annotations: Vec<(Option<AnnotationId>, Text)>,
 }
 impl TextLine {
 	fn add_prefix(&mut self, this: Text, annotations: Text) {
 		self.prefix.extend(this);
-		for (_, ele) in self.annotation_buffers.iter_mut() {
+		for (_, ele) in self.bottom_annotations.iter_mut() {
 			ele.splice(0..0, Some(annotations.clone()));
 		}
 	}
@@ -203,10 +210,10 @@ fn process(
 			.filter(|t| !t.annotations.is_empty())
 		{
 			let hide_ranges_for = if opts.apply_to_orig {
-				let parsed = single_line::group_singleline(&line.annotations);
+				let parsed = inline::group_singleline(&line.annotations);
 				assert!(line.annotation.is_none());
 				line.annotation = parsed.annotation;
-				single_line::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
+				inline::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
 
 				line.annotations
 					.retain(|a| !parsed.processed.contains(&a.id));
@@ -218,12 +225,14 @@ fn process(
 			};
 
 			let char_to_display_fixup = fixup_char_to_display(line.line.data().copied());
-			let extra = single_line::generate_range_annotations(
+			let mut extra = single_line::generate_range_annotations(
 				line.annotations.clone(),
 				&char_to_display_fixup,
 				&hide_ranges_for,
+				false,
 			);
-			line.annotation_buffers = extra;
+			extra.reverse();
+			line.top_annotations = extra;
 			line.annotations.truncate(0);
 		}
 	}
@@ -261,7 +270,31 @@ fn process(
 			.enumerate()
 			.flat_map(|(i, l)| l.as_text_mut().map(|t| (i, t)))
 		{
-			for buf in line.annotation_buffers.drain(..) {
+			for buf in line.top_annotations.drain(..) {
+				insertions.push((i + 1, buf))
+			}
+		}
+		insertions.reverse();
+		for (i, (annotation, line)) in insertions {
+			source.lines.insert(
+				i - 1,
+				Line::Annotation(AnnotationLine {
+					line,
+					annotation,
+					prefix: SegmentBuffer::new([]),
+				}),
+			);
+		}
+	}
+	{
+		let mut insertions = vec![];
+		for (i, line) in source
+			.lines
+			.iter_mut()
+			.enumerate()
+			.flat_map(|(i, l)| l.as_text_mut().map(|t| (i, t)))
+		{
+			for buf in line.bottom_annotations.drain(..) {
 				insertions.push((i + 1, buf))
 			}
 		}
@@ -313,6 +346,7 @@ fn process(
 				.iter()
 				.map(|(k, v)| (*k, vec![v.range].into_iter().collect::<RangeSet<usize>>()))
 				.collect::<Vec<_>>();
+
 			grouped.sort_by_key(|a| a.1.num_elements());
 			let grouped = single_line::group_nonconflicting(&grouped, &HashSet::new());
 
@@ -507,7 +541,7 @@ fn offset_to_linecol(mut offset: usize, linestarts: &BTreeSet<usize>) -> LineCol
 	}
 }
 
-pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
+fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, opts.tab_width);
 	let mut annotations = annotations.to_vec();
 
@@ -542,7 +576,8 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 			annotation: None,
 			prefix: SegmentBuffer::new([]),
 			annotations: Vec::new(),
-			annotation_buffers: Vec::new(),
+			bottom_annotations: Vec::new(),
+			top_annotations: Vec::new(),
 			fold: true,
 		})
 		.map(Line::Text)
@@ -608,7 +643,7 @@ pub fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 	source
 }
 
-fn source_to_ansi(source: &Source) -> String {
+pub fn source_to_ansi(source: &Source) -> String {
 	let mut out = String::new();
 	for line in &source.lines {
 		let line = line
@@ -622,6 +657,120 @@ fn source_to_ansi(source: &Source) -> String {
 	out
 }
 
+pub struct FormattingGenerator {
+	rand: SmallRng,
+}
+impl FormattingGenerator {
+	pub fn new(src: &[u8]) -> Self {
+		let mut rng_seed = [0; 32];
+		// let seed = seed.to_value();
+		for chunk in src.chunks(32) {
+			for (s, c) in rng_seed.iter_mut().zip(chunk.iter()) {
+				*s ^= *c;
+			}
+		}
+
+		Self {
+			rand: SmallRng::from_seed(rng_seed),
+		}
+	}
+	fn next(&mut self) -> RandomColor {
+		let mut color = RandomColor::new();
+		color.seed(self.rand.gen::<u64>());
+		color.luminosity(Luminosity::Bright);
+		color
+	}
+}
+
+pub struct SnippetBuilder {
+	src: String,
+	generator: FormattingGenerator,
+	annotations: Vec<Annotation>,
+}
+impl SnippetBuilder {
+	pub fn new(src: impl AsRef<str>) -> Self {
+		Self {
+			src: src.as_ref().to_string(),
+			generator: FormattingGenerator::new(src.as_ref().as_bytes()),
+			annotations: Vec::new(),
+		}
+	}
+	fn custom(&mut self, custom_color: Color, mut text: Text) -> AnnotationBuilder<'_> {
+		let mut color = self.generator.next();
+		color.hue(custom_color);
+		let formatting = Formatting::rgb(color.to_rgb_array());
+		let [r, g, b] = color.luminosity(Luminosity::Light).to_rgb_array();
+		text.apply_meta(
+			0..text.len(),
+			&AddColorToUncolored(u32::from_be_bytes([r, g, b, 0])),
+		);
+		AnnotationBuilder {
+			snippet: self,
+			priority: 0,
+			formatting,
+			ranges: Vec::new(),
+			text,
+		}
+	}
+	pub fn error(&mut self, text: Text) -> AnnotationBuilder<'_> {
+		self.custom(Color::Red, text)
+	}
+	pub fn warning(&mut self, text: Text) -> AnnotationBuilder<'_> {
+		self.custom(Color::Orange, text)
+	}
+	pub fn note(&mut self, text: Text) -> AnnotationBuilder<'_> {
+		self.custom(Color::Green, text)
+	}
+	pub fn info(&mut self, text: Text) -> AnnotationBuilder<'_> {
+		self.custom(Color::Blue, text)
+	}
+	pub fn build(self) -> Source {
+		parse(
+			&self.src,
+			&self.annotations,
+			&Opts {
+				apply_to_orig: true,
+				fold: true,
+				tab_width: 4,
+			},
+		)
+	}
+}
+
+#[must_use]
+pub struct AnnotationBuilder<'s> {
+	snippet: &'s mut SnippetBuilder,
+	priority: usize,
+	formatting: Formatting,
+	ranges: Vec<Range<usize>>,
+	text: Text,
+}
+
+impl<'s> AnnotationBuilder<'s> {
+	pub fn range(mut self, range: RangeInclusive<usize>) -> Self {
+		assert!(
+			*range.end() < self.snippet.src.len(),
+			"out of bounds annotation"
+		);
+		self.ranges.push(Range::new(*range.start(), *range.end()));
+		self
+	}
+	pub fn ranges(mut self, ranges: impl IntoIterator<Item = RangeInclusive<usize>>) -> Self {
+		for range in ranges {
+			self = self.range(range);
+		}
+		self
+	}
+	pub fn build(self) {
+		self.snippet.annotations.push(Annotation {
+			priority: self.priority,
+			formatting: self.formatting,
+			ranges: self.ranges.into_iter().collect(),
+			text: self.text,
+		});
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -632,151 +781,69 @@ mod tests {
 
 	#[test]
 	fn readme() {
-		let s = parse(
-			include_str!("../../../fixtures/std.jsonnet"),
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(4, 8), Range::new(3142, 3146)]
-						.into_iter()
-						.collect(),
-					text: Text::single("Local defs".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xe942f500),
-					ranges: [Range::new(10, 12)].into_iter().collect(),
-					text: Text::single("Local name".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(14, 14)].into_iter().collect(),
-					text: Text::single("Equals".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xffff0000),
-					ranges: [Range::new(3133, 3135), Range::new(6155, 6157)]
-						.into_iter()
-						.collect(),
-					text: Text::single("Connected definition".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ffff00),
-					ranges: [
-						Range::new(5909, 5913),
-						Range::new(6062, 6066),
-						Range::new(6242, 6244),
-					]
-					.into_iter()
-					.collect(),
-					text: Text::single("Another connected definition".chars(), default()),
-				},
-			],
-			&Opts {
-				apply_to_orig: true,
-				fold: true,
-				tab_width: 4,
-			},
-		);
-
+		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
+		snippet
+			.error(Text::single("Local defs".chars(), default()))
+			.ranges([4..=8, 3142..=3146])
+			.build();
+		snippet
+			.warning(Text::single("Local name".chars(), default()))
+			.range(10..=12)
+			.build();
+		snippet
+			.info(Text::single("Equals".chars(), default()))
+			.range(14..=14)
+			.build();
+		snippet
+			.note(Text::single("Connected definition".chars(), default()))
+			.ranges([3133..=3135, 6155..=6157])
+			.build();
+		snippet
+			.note(Text::single(
+				"Another connected definition".chars(),
+				default(),
+			))
+			.ranges([5909..=5913, 6062..=6066, 6242..=6244])
+			.build();
+		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
 	}
 
 	#[test]
 	fn test_fmt() {
-		let s = parse(
-			include_str!("../../../fixtures/std.jsonnet"),
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xffffff00),
-					ranges: [Range::new(2832, 3135)].into_iter().collect(),
-					text: Text::single("Hello world".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff00ff00),
-					ranges: [Range::new(2838, 2847)].into_iter().collect(),
-					text: Text::single("Conflict".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x19af15),
-					ranges: [Range::new(2839, 2846)].into_iter().collect(),
-					text: Text::single("Still has text".chars(), default()),
-				},
-			],
-			&Opts {
-				apply_to_orig: true,
-				fold: true,
-				tab_width: 4,
-			},
-		);
-
+		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
+		snippet
+			.info(Text::single("Hello world".chars(), default()))
+			.range(2832..=3135)
+			.build();
+		snippet
+			.warning(Text::single("Conflict".chars(), default()))
+			.range(2838..=2847)
+			.build();
+		snippet
+			.error(Text::single("Still has text".chars(), default()))
+			.range(2839..=2846)
+			.build();
+		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
 	}
 
 	#[test]
 	fn fullwidth_marker() {
-		let s = parse(
-			"ＡＢＣ",
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(0, 2)].into_iter().collect(),
-					text: Text::single("a".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(3, 5)].into_iter().collect(),
-					text: Text::single("b".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x0000ff00),
-					ranges: [Range::new(6, 8)].into_iter().collect(),
-					text: Text::single("c".chars(), default()),
-				},
-			],
-			&Opts {
-				apply_to_orig: false,
-				fold: true,
-				tab_width: 4,
-			},
-		);
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn tab_in_normal_and_fullwidth() {
-		let s = parse(
-			"Ａ\tＢ\n\tＢ\na\tb\n\tb",
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(17, 17)].into_iter().collect(),
-					text: Text::single("Line start".chars(), default()),
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(18, 18)].into_iter().collect(),
-					text: Text::single("Aligned".chars(), default()),
-				},
-			],
-			&Opts {
-				apply_to_orig: false,
-				fold: false,
-				tab_width: 4,
-			},
-		);
+		let mut snippet = SnippetBuilder::new("ＡＢＣ");
+		snippet
+			.info(Text::single("a".chars(), default()))
+			.range(0..=2)
+			.build();
+		snippet
+			.info(Text::single("b".chars(), default()))
+			.range(3..=5)
+			.build();
+		snippet
+			.info(Text::single("c".chars(), default()))
+			.range(6..=8)
+			.build();
+		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
 	}
 
@@ -814,52 +881,71 @@ mod tests {
 	}
 
 	#[test]
-	fn example_from_annotate_snippets() {
+	fn tab_in_normal_and_fullwidth() {
 		let s = parse(
-			r#") -> Option<String> {
-    for ann in annotations {
-        match (ann.range.0, ann.range.1) {
-            (None, None) => continue,
-            (Some(start), Some(end)) if start > end_index => continue,
-            (Some(start), Some(end)) if start >= start_index => {
-                let label = if let Some(ref label) = ann.label {
-                    format!(" {}", label)
-                } else {
-                    String::from("")
-                };
-                return Some(format!(
-                    "{}{}{}",
-                    " ".repeat(start - start_index),
-                    "^".repeat(end - start),
-                    label
-                ));
-            }
-            _ => continue,
-        }
-    }"#,
+			"Ａ\tＢ\n\tＢ\na\tb\n\tb",
 			&[
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(5, 18)].into_iter().collect(),
-					text: Text::single(
-						"expected `Option<String>` because of return type".chars(),
-						default(),
-					),
+					ranges: [Range::new(17, 17)].into_iter().collect(),
+					text: Text::single("Line start".chars(), default()),
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(26, 723)].into_iter().collect(),
-					text: Text::single("expected enum `std::option::Option`".chars(), default()),
+					ranges: [Range::new(18, 18)].into_iter().collect(),
+					text: Text::single("Aligned".chars(), default()),
 				},
 			],
 			&Opts {
-				apply_to_orig: true,
-				fold: true,
+				apply_to_orig: false,
+				fold: false,
 				tab_width: 4,
 			},
 		);
+		println!("{}", source_to_ansi(&s))
+	}
+
+	#[test]
+	fn example_from_annotate_snippets() {
+		let src = r#") -> Option<String> {
+	for ann in annotations {
+		match (ann.range.0, ann.range.1) {
+			(None, None) => continue,
+			(Some(start), Some(end)) if start > end_index => continue,
+			(Some(start), Some(end)) if start >= start_index => {
+				let label = if let Some(ref label) = ann.label {
+					format!(" {}", label)
+				} else {
+					String::from("")
+				};
+				return Some(format!(
+					"{}{}{}",
+					" ".repeat(start - start_index),
+					"^".repeat(end - start),
+					label
+				));
+			}
+			_ => continue,
+		}
+	}"#;
+		let mut snippet = SnippetBuilder::new(src);
+		snippet
+			.error(Text::single(
+				"expected `Option<String>` because of return type".chars(),
+				default(),
+			))
+			.range(5..=18)
+			.build();
+		snippet
+			.note(Text::single(
+				"expected enum `std::option::Option`".chars(),
+				default(),
+			))
+			.range(22..=508)
+			.build();
+		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
 	}
 }
