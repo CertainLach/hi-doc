@@ -6,7 +6,8 @@ use std::{
 mod segment;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
-use formatting::{AddColorToUncolored, Text};
+use formatting::{AddColorToUncolored};
+pub use formatting::Text;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use random_color::{Color, Luminosity, RandomColor};
 use range_map::{Range, RangeSet};
