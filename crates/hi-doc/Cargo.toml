@@ -1,7 +1,9 @@
 [package]
 name = "hi-doc"
+description = "Diagnostics formatting library"
 version.workspace = true
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 smallvec = "1.13.1"
