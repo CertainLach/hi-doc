@@ -1,11 +1,11 @@
 [package]
-name = "ass-stroke"
+name = "hi-doc"
 version.workspace = true
 edition = "2021"
 
 [dependencies]
-smallvec = "1.10.0"
+smallvec = "1.13.1"
 range-map = "0.2.0"
-random_color = "0.6.1"
+random_color = "0.8.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
-num-traits = "0.2.15"
+num-traits = "0.2.18"

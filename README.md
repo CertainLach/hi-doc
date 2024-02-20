@@ -1,4 +1,4 @@
-# ass-stroke
+# hi-doc
 
 ![annotated code example](./fixtures/example.png)
 
@@ -10,7 +10,7 @@ Most diagnostic formatting libraries implement both formatting and span/source m
 This can be beneficial for consistency, but it requires tying the code of your library to a third-party annotation
 library, which can be inconvenient, especially when your library already has its own logic for diagnostics.
 
-ass-stroke solely implements diagnostic formatting, allowing for seamless integration with existing diagnostic logic
+hi-doc solely implements diagnostic formatting, allowing for seamless integration with existing diagnostic logic
 within a library.
 
 ## Finished features

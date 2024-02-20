@@ -7,14 +7,14 @@ mod segment;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 use formatting::{AddColorToUncolored};
-pub use formatting::Text;
+pub use formatting::{Text, TextPart};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use random_color::{Color, Luminosity, RandomColor};
 use range_map::{Range, RangeSet};
 use segment::{Segment, SegmentBuffer};
 use single_line::LineAnnotation;
 
-use crate::formatting::Formatting;
+pub use crate::formatting::Formatting;
 
 mod annotation;
 mod anomaly_fixer;
@@ -52,6 +52,7 @@ struct TextLine {
 	bottom_annotations: Vec<(Option<AnnotationId>, Text)>,
 }
 impl TextLine {
+	#[allow(dead_code)]
 	fn add_prefix(&mut self, this: Text, annotations: Text) {
 		self.prefix.extend(this);
 		for (_, ele) in self.bottom_annotations.iter_mut() {
@@ -129,6 +130,7 @@ impl Line {
 			_ => None,
 		}
 	}
+	#[allow(dead_code)]
 	fn as_gap_mut(&mut self) -> Option<&mut GapLine> {
 		match self {
 			Line::Gap(t) => Some(t),

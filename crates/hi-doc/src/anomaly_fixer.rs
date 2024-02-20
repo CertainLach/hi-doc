@@ -300,6 +300,7 @@ pub fn apply_fixup(offset: &mut usize, fixups: &BTreeMap<usize, isize>) {
 		}
 	}
 }
+#[cfg(test)]
 pub fn apply_fixups(offsets: &mut [usize], fixups: &BTreeMap<usize, isize>) {
 	for offset in offsets.iter_mut() {
 		apply_fixup(offset, fixups)
