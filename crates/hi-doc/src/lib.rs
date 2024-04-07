@@ -684,16 +684,16 @@ pub struct FormattingGenerator {
 }
 impl FormattingGenerator {
 	pub fn new(src: &[u8]) -> Self {
-		let mut rng_seed = [0; 32];
+		let mut rng_seed = [0; 8];
 		// let seed = seed.to_value();
-		for chunk in src.chunks(32) {
+		for chunk in src.chunks(8) {
 			for (s, c) in rng_seed.iter_mut().zip(chunk.iter()) {
 				*s ^= *c;
 			}
 		}
 
 		Self {
-			rand: SmallRng::from_seed(rng_seed),
+			rand: SmallRng::seed_from_u64(u64::from_be_bytes(rng_seed)),
 		}
 	}
 	fn next(&mut self) -> RandomColor {
