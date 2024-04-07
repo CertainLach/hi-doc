@@ -6,7 +6,7 @@ edition = "2021"
 license.workspace = true
 
 [dependencies]
-smallvec = "1.13.1"
+smallvec = "1.13.2"
 range-map = "0.2.0"
 random_color = "0.8.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
