@@ -10,7 +10,10 @@ use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 pub use formatting::Text;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
-use random_color::{Color, Luminosity, RandomColor};
+use random_color::{
+	options::{Gamut, Luminosity},
+	RandomColor,
+};
 use range_map::{Range, RangeSet};
 use segment::SegmentBuffer;
 use single_line::LineAnnotation;
@@ -243,11 +246,11 @@ fn draw_line_numbers(source: &mut Source) {
 			.unwrap_or(0);
 		let max_len = max_num.to_string().len();
 		let prefix_segment =
-			SegmentBuffer::segment(&" ".repeat(max_len - 1), Formatting::line_number());
+			SegmentBuffer::segment(" ".repeat(max_len - 1), Formatting::line_number());
 		for line in lines.iter_mut() {
 			match line {
 				Line::Text(t) => t.prefix.extend([SegmentBuffer::segment(
-					&format!("{:>width$} ", t.line_num, width = max_len),
+					format!("{:>width$} ", t.line_num, width = max_len),
 					Formatting::line_number(),
 				)]),
 				Line::Annotation(a) => a.prefix.extend([
@@ -336,7 +339,7 @@ fn draw_line_connections(
 				}
 				while max_index < 2 {
 					let seg = Some(SegmentBuffer::segment(
-						&" ".repeat(2 - max_index),
+						" ".repeat(2 - max_index),
 						annotation_fmt.clone(),
 					));
 					for line in lines.iter_mut() {
@@ -688,16 +691,16 @@ pub struct FormattingGenerator {
 }
 impl FormattingGenerator {
 	pub fn new(src: &[u8]) -> Self {
-		let mut rng_seed = [0; 32];
+		let mut rng_seed = [0; 8];
 		// let seed = seed.to_value();
-		for chunk in src.chunks(32) {
+		for chunk in src.chunks(8) {
 			for (s, c) in rng_seed.iter_mut().zip(chunk.iter()) {
 				*s ^= *c;
 			}
 		}
 
 		Self {
-			rand: SmallRng::from_seed(rng_seed),
+			rand: SmallRng::seed_from_u64(u64::from_be_bytes(rng_seed)),
 		}
 	}
 	fn next(&mut self) -> RandomColor {
@@ -721,7 +724,7 @@ impl SnippetBuilder {
 			annotations: Vec::new(),
 		}
 	}
-	fn custom(&mut self, custom_color: Color, text: Text) -> AnnotationBuilder<'_> {
+	fn custom(&mut self, custom_color: Gamut, text: Text) -> AnnotationBuilder<'_> {
 		let mut color = self.generator.next();
 		color.hue(custom_color);
 		let formatting = Formatting::rgb(color.to_rgb_array());
@@ -740,16 +743,16 @@ impl SnippetBuilder {
 		}
 	}
 	pub fn error(&mut self, text: Text) -> AnnotationBuilder<'_> {
-		self.custom(Color::Red, text)
+		self.custom(Gamut::Red, text)
 	}
 	pub fn warning(&mut self, text: Text) -> AnnotationBuilder<'_> {
-		self.custom(Color::Orange, text)
+		self.custom(Gamut::Orange, text)
 	}
 	pub fn note(&mut self, text: Text) -> AnnotationBuilder<'_> {
-		self.custom(Color::Green, text)
+		self.custom(Gamut::Green, text)
 	}
 	pub fn info(&mut self, text: Text) -> AnnotationBuilder<'_> {
-		self.custom(Color::Blue, text)
+		self.custom(Gamut::Blue, text)
 	}
 	pub fn build(self) -> Source {
 		parse(
@@ -774,7 +777,7 @@ pub struct AnnotationBuilder<'s> {
 	text: Text,
 }
 
-impl<'s> AnnotationBuilder<'s> {
+impl AnnotationBuilder<'_> {
 	pub fn range(mut self, range: RangeInclusive<usize>) -> Self {
 		assert!(
 			*range.end() < self.snippet.src.len(),
