@@ -1,10 +1,11 @@
+use core::fmt;
+use std::cell::Ref;
+use std::ops::{Bound, Range, RangeBounds};
 /// Mutable rich text implementation
-use std::{
-	fmt::Debug,
-	ops::{Bound, Deref, DerefMut, RangeBounds},
-};
+use std::str;
 
-use smallvec::{smallvec, SmallVec};
+use crate::associated_data::AssociatedData;
+use jumprope::{JumpRope, JumpRopeBuf};
 
 pub trait Meta: Clone {
 	fn try_merge(&mut self, other: &Self) -> bool;
@@ -22,423 +23,209 @@ pub trait MetaApply<T> {
 	fn apply(&mut self, change: &T);
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct Segment<D, M> {
-	meta: M,
-	data: SmallVec<[D; 16]>,
+#[derive(Clone, Debug)]
+pub struct SegmentBuffer<M> {
+	rope: JumpRopeBuf,
+	meta: AssociatedData<M>,
 }
-impl<D, M> Segment<D, M> {
-	pub fn new(data: impl IntoIterator<Item = D>, meta: M) -> Self {
+
+#[ouroboros::self_referencing]
+pub struct JumpRopeBufIter<'r> {
+	rope_buf: Ref<'r, JumpRope>,
+	#[borrows(rope_buf)]
+	#[not_covariant]
+	iter: jumprope::iter::Substrings<'this, jumprope::iter::SliceIter<'this>>,
+}
+impl<'f> Iterator for JumpRopeBufIter<'f> {
+	type Item = &'f str;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		let v = self.with_iter_mut(|s| s.next())?;
+
+		// Safety: this str is located in rope_buf, yet it isn't
+		// possible to explain this to jumprope
+		//
+		// This value will live as long as parent ropebuf, because
+		// the iterator itself has a lock on jumprope (Ref), and
+		// the string is borrowed from ouroboros.
+		Some(unsafe {
+			std::str::from_utf8_unchecked(std::slice::from_raw_parts(v.as_ptr(), v.len()))
+		})
+	}
+}
+#[ouroboros::self_referencing]
+pub struct JumpRopeBufCharIter<'r> {
+	rope_buf: Ref<'r, JumpRope>,
+	#[borrows(rope_buf)]
+	#[covariant]
+	iter: jumprope::iter::Chars<'this, jumprope::iter::ContentIter<'this>>,
+}
+impl Iterator for JumpRopeBufCharIter<'_> {
+	type Item = char;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		self.with_iter_mut(|c| c.next())
+	}
+}
+
+fn bounds_to_exclusive(bounds: impl RangeBounds<usize>, len: usize) -> Range<usize> {
+	let start = match bounds.start_bound() {
+		Bound::Included(v) => *v,
+		Bound::Excluded(_) => unreachable!("not creatable with standard syntax"),
+		Bound::Unbounded => 0,
+	};
+	let end = match bounds.end_bound() {
+		Bound::Included(i) => i + 1,
+		Bound::Excluded(e) => *e,
+		Bound::Unbounded => len,
+	};
+	start..end
+}
+
+impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
+	pub fn new() -> Self {
 		Self {
-			meta,
-			data: data.into_iter().collect(),
+			rope: JumpRopeBuf::new(),
+			meta: AssociatedData::new(),
 		}
 	}
-	#[inline]
-	pub fn meta(&self) -> &M {
-		&self.meta
-	}
-}
-impl<D, M> Deref for Segment<D, M> {
-	type Target = SmallVec<[D; 16]>;
-
-	fn deref(&self) -> &Self::Target {
-		&self.data
-	}
-}
-impl<D, M> DerefMut for Segment<D, M> {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.data
-	}
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct SegmentBuffer<D, M> {
-	// Can be replaced with Vec<u8> and segments to (UserId, Range<usize>), instead of keeping every buffer inside of segment,
-	// But it only would be faster for compaction, inserts would be slower
-	segments: SmallVec<[Segment<D, M>; 1]>,
-	len: usize,
-}
-impl<D: Clone + Debug, M: Meta + Debug> SegmentBuffer<D, M> {
-	pub fn empty() -> Self {
-		Self {
-			segments: smallvec![],
-			len: 0,
-		}
-	}
-	pub fn new(segments: impl IntoIterator<Item = Segment<D, M>>) -> Self {
-		let mut len = 0;
-		let segments = segments.into_iter().inspect(|s| len += s.len()).collect();
-		Self { segments, len }
-	}
-	pub fn single(data: impl IntoIterator<Item = D>, meta: M) -> Self {
-		Self::new([Segment::new(data, meta)])
-	}
-	pub fn compact(&mut self) {
-		if self.segments.len() <= 1 {
-			return;
-		}
-		let mut last_segment = 0;
-		let mut removed = Vec::new();
-		loop {
-			if self.segments.len() < last_segment + 1 {
-				break;
-			}
-			let (first, rest) = self.segments.split_at_mut(last_segment + 1);
-			if rest.is_empty() {
-				break;
-			}
-			let first = &mut first[first.len() - 1];
-			let mut merged = 0;
-			while rest.len() != merged && first.meta.try_merge(&rest[merged].meta) {
-				first.data.extend(rest[merged].data.drain(..));
-				merged += 1;
-			}
-			removed.push((last_segment + 1)..(last_segment + 1 + merged));
-			last_segment = last_segment + 1 + merged;
-		}
-		for range in removed.into_iter().rev() {
-			self.segments.drain(range);
-		}
-	}
-	pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
-		let mut segments = SmallVec::new();
-		let mut len = 0;
-		let mut start = match range.start_bound() {
-			Bound::Included(i) => *i,
-			Bound::Excluded(_) => unreachable!(),
-			Bound::Unbounded => 0,
-		};
-		let mut end = match range.end_bound() {
-			Bound::Included(i) => *i + 1,
-			Bound::Excluded(i) => *i,
-			Bound::Unbounded => self.len(),
-		};
-		if end > self.len() {
-			panic!("slice out of range: {end}")
-		}
-		for segment in self.segments.iter() {
-			if start < segment.len() {
-				let end = segment.len().min(end);
-				segments.push(Segment::new(
-					segment[start..end].iter().cloned(),
-					segment.meta().clone(),
-				));
-				len += end - start;
-			}
-			start = start.saturating_sub(segment.len());
-			end = end.saturating_sub(segment.len());
-			if end == 0 {
-				break;
+	pub fn segment(v: impl AsRef<str>, meta: M) -> Self {
+		let v: String = v.as_ref().to_string();
+		let rope: JumpRopeBuf = v.into();
+		if rope.is_empty() {
+			Self::new()
+		} else {
+			Self {
+				meta: AssociatedData::with_size(rope.len_chars(), meta),
+				rope,
 			}
 		}
-		Self { segments, len }
 	}
-
-	pub fn get(&self, offset: usize) -> Option<(D, M)> {
-		if offset > self.len() {
-			return None;
-		}
-		let segment = &self.slice(offset..=offset).segments[0];
-		Some((segment.data[0].clone(), segment.meta.clone()))
-	}
-
-	pub fn splice(&mut self, range: impl RangeBounds<usize>, insert: Option<SegmentBuffer<D, M>>) {
-		let mut start = match range.start_bound() {
-			Bound::Included(i) => *i,
-			Bound::Excluded(_) => unreachable!(),
-			Bound::Unbounded => 0,
-		};
-		let mut end = match range.end_bound() {
-			Bound::Included(i) => *i + 1,
-			Bound::Excluded(i) => *i,
-			Bound::Unbounded => self.len(),
-		};
-		if end > self.len() {
-			panic!("splice out of range: {end}")
-		}
-		let mut insert_at = None;
-		let mut segment_idx = 0;
-		while segment_idx < self.segments.len() {
-			let segment_length = self.segments[segment_idx].len();
-			if start < segment_length {
-				let removed = start..end.min(segment_length);
-				if start == 0 {
-					// Beginning of segment
-					// abcdefg
-					// ^
-					if removed.end < segment_length {
-						// Start of segment
-						// abcdefg
-						// ^-^
-						if insert_at.is_none() {
-							insert_at = Some(segment_idx);
-						}
-						let old_segment = &self.segments[segment_idx];
-						let new_segment = Segment::new(
-							old_segment[removed.end..].iter().cloned(),
-							old_segment.meta().clone(),
-						);
-						self.len -= removed.end;
-						self.segments[segment_idx] = new_segment;
-					} else {
-						// Full segment
-						// abcdefg
-						// ^-----^
-						self.len -= self.segments[segment_idx].len();
-						self.segments.remove(segment_idx);
-						if insert_at.is_none() {
-							insert_at = Some(segment_idx);
-						}
-						segment_idx = segment_idx.saturating_sub(1);
-					}
-				} else {
-					// Inside of segment
-					// abcdefg
-					//   ^
-					if insert_at.is_none() {
-						insert_at = Some(segment_idx + 1);
-					}
-					if removed.end < segment_length {
-						// Part of segment
-						// abcdefg
-						//   ^-^
-						let old_segment = &mut self.segments[segment_idx];
-						let new_segment = Segment::new(
-							old_segment[removed.end..].iter().cloned(),
-							old_segment.meta().clone(),
-						);
-						old_segment.truncate(removed.start);
-						self.len -= removed.end - removed.start;
-						self.segments.insert(segment_idx + 1, new_segment);
-						segment_idx += 1;
-					} else {
-						// End of segment
-						// abcdefg
-						//   ^---^
-						self.segments[segment_idx].truncate(removed.start);
-						self.len -= removed.end - removed.start;
-					}
-				}
+	pub fn segment_chars(v: impl IntoIterator<Item = char>, meta: M) -> Self {
+		let v: String = v.into_iter().collect();
+		let rope: JumpRopeBuf = v.into();
+		if rope.is_empty() {
+			Self::new()
+		} else {
+			Self {
+				meta: AssociatedData::with_size(rope.len_chars(), meta),
+				rope,
 			}
-			if start < segment_length && end == start {
-				if insert_at.is_none() {
-					insert_at = Some(segment_idx);
-				}
-				break;
-			}
-			end = end.saturating_sub(segment_length);
-			start = start.saturating_sub(segment_length);
-			segment_idx += 1;
 		}
-		if let Some(insert) = insert {
-			self.len += insert.len();
-			let insert_at = insert_at.unwrap_or(self.segments.len());
-			self.segments.insert_many(insert_at, insert.segments);
-		}
-		self.compact()
 	}
-
+	pub fn repeat_char(char: char, count: usize, meta: M) -> Self {
+		Self::segment(char.to_string().repeat(count), meta)
+	}
+	pub fn insert(&mut self, position: usize, buf: Self) {
+		let incoming = buf.rope.borrow();
+		let mut offset = position;
+		for (str, len) in incoming.substrings_with_len() {
+			self.rope.insert(offset, str);
+			offset += len;
+		}
+		self.meta.insert(position, buf.meta);
+	}
+	pub fn remove(&mut self, range: impl RangeBounds<usize>) {
+		let range = bounds_to_exclusive(range, self.len());
+		self.rope.remove(range.clone());
+		self.meta.remove(range);
+	}
+	pub fn splice(&mut self, range: impl RangeBounds<usize>, value: Option<Self>) {
+		let range = bounds_to_exclusive(range, self.len());
+		let start = range.start;
+		self.remove(range);
+		if let Some(value) = value {
+			self.insert(start, value);
+		}
+	}
+	pub fn extend(&mut self, buf: impl IntoIterator<Item = Self>) {
+		for buf in buf {
+			self.insert(self.meta.len(), buf)
+		}
+	}
+	pub fn append(&mut self, buf: Self) {
+		self.extend([buf]);
+	}
+	pub fn iter(&self) -> impl IntoIterator<Item = (JumpRopeBufIter<'_>, &'_ M)> {
+		self.meta.iter().map(|v| {
+			(
+				JumpRopeBufIter::new(self.rope.borrow(), |r| r.slice_substrings(v.1)),
+				v.0,
+			)
+		})
+	}
 	pub fn len(&self) -> usize {
-		self.len
+		self.rope.len_chars()
 	}
 	pub fn is_empty(&self) -> bool {
-		self.segments.is_empty()
+		self.rope.is_empty()
 	}
 
-	pub fn segments(&self) -> impl Iterator<Item = &Segment<D, M>> {
-		self.segments.iter()
-	}
-	pub fn data(&self) -> impl Iterator<Item = &D> {
-		self.segments().flat_map(|s| s.data.iter())
-	}
-	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize> + Clone, apply: &T)
-	where
-		M: MetaApply<T>,
-	{
-		let mut slice = self.slice(range.clone());
-		for segment in slice.segments.iter_mut() {
-			segment.meta.apply(apply);
-		}
-		self.splice(range, Some(slice));
-	}
-	pub fn push(&mut self, segment: Segment<D, M>) {
-		self.len += segment.len();
-		self.segments.push(segment);
-	}
-	pub fn extend(&mut self, other: SegmentBuffer<D, M>) {
-		self.len += other.len;
-		self.segments.extend(other.segments);
-	}
-	pub fn resize(&mut self, size: usize, fill: D, meta: M) {
-		if self.len() > size {
-			self.splice(0..self.len(), Some(self.slice(0..size)));
-		} else {
-			let extra = size - self.len();
-			let segment = Segment::new(vec![fill; extra], meta);
-			self.push(segment);
-		}
+	pub fn get(&self, pos: usize) -> Option<(char, &M)> {
+		self.rope
+			.borrow()
+			.slice_chars(pos..pos + 1)
+			.next()
+			.map(|v| (v, self.meta.get(pos).expect("meta is broken?")))
 	}
 
-	pub fn split(&self, char: D) -> Vec<Self>
-	where
-		D: PartialEq,
-	{
-		let mut offset = 0;
+	pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+		JumpRopeBufCharIter::new(self.rope.borrow(), |v| v.chars())
+	}
+	pub fn resize(&mut self, size: usize, char: char, meta: M) {
+		if size < self.len() {
+			self.remove(size..);
+		} else if size > self.len() {
+			self.extend([Self::repeat_char(char, size - self.len(), meta)])
+		}
+	}
+	pub fn split_at(self, pos: usize) -> (Self, Self) {
+		let rope = self.rope.into_inner();
+		let mut left = rope.clone();
+		left.remove(pos..left.len_chars());
+		let mut right = rope;
+		right.remove(0..pos);
+
+		let meta = self.meta.clone();
+		let (meta_left, meta_right) = meta.split(pos);
+		(
+			SegmentBuffer {
+				rope: left.into(),
+				meta: meta_left,
+			},
+			SegmentBuffer {
+				rope: right.into(),
+				meta: meta_right,
+			},
+		)
+	}
+	pub fn index_of(&self, char: char) -> Option<usize> {
+		self.chars().position(|v| v == char)
+	}
+	pub fn split(&self, char: char) -> Vec<Self> {
 		let mut out = Vec::new();
-		while offset != self.len() {
-			let size = self
-				.data()
-				.skip(offset)
-				.position(|d| d == &char)
-				.unwrap_or(self.len() - offset);
-			let segment = self.slice(offset..offset + size);
-			out.push(segment);
-			offset += size;
-			if offset != self.len() {
-				offset += 1;
-			}
+		let mut v = self.clone();
+		while let Some(pos) = v.index_of(char) {
+			let (left, right) = v.split_at(pos);
+			out.push(left);
+			v = right;
 		}
+		out.push(v);
 		out
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	mod compact {
-		use crate::segment::Segment;
-		type SegmentBuffer = crate::segment::SegmentBuffer<u8, usize>;
-
-		#[test]
-		fn simple() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2], 1), Segment::new([3, 4], 1)]);
-			buf.compact();
-			assert_eq!(buf, SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]));
-		}
-
-		#[test]
-		fn single() {
-			let mut buf = SegmentBuffer::new([
-				Segment::new([1, 2], 1),
-				Segment::new([3, 4], 1),
-				Segment::new([5], 2),
-			]);
-			buf.compact();
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1), Segment::new([5], 2)])
-			);
-		}
-	}
-
-	mod slice {
-		use crate::segment::{Segment, SegmentBuffer};
-
-		#[test]
-		fn first() {
-			let input = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			assert_eq!(input.slice(0..=3), input);
-
-			let input = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			assert_eq!(input.slice(0..4), input);
-		}
-
-		#[test]
-		fn part() {
-			let input = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			assert_eq!(
-				input.slice(0..=2),
-				SegmentBuffer::new([Segment::new([1, 2, 3], 1)])
-			);
-
-			let input = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			assert_eq!(
-				input.slice(1..=3),
-				SegmentBuffer::new([Segment::new([2, 3, 4], 1)])
-			);
-		}
-
-		#[test]
-		fn two() {
-			let input =
-				SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1), Segment::new([5, 6, 7, 8], 1)]);
-			assert_eq!(
-				input.slice(2..=5),
-				SegmentBuffer::new([Segment::new([3, 4], 1), Segment::new([5, 6], 1)])
-			);
-
-			let input =
-				SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1), Segment::new([5, 6, 7, 8], 1)]);
-			assert_eq!(input.slice(0..=7), input);
-		}
-	}
-
-	mod splice {
-		use crate::segment::{Segment, SegmentBuffer};
-
-		#[test]
-		fn insert_start() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			buf.splice(0..0, Some(SegmentBuffer::new([Segment::new([5], 2)])));
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([Segment::new([5], 2), Segment::new([1, 2, 3, 4], 1)])
-			)
-		}
-
-		#[test]
-		fn insert_end() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			buf.splice(
-				buf.len..buf.len,
-				Some(SegmentBuffer::new([Segment::new([5], 2)])),
-			);
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1), Segment::new([5], 2),])
-			)
-		}
-
-		#[test]
-		fn insert_middle() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			buf.splice(2..2, Some(SegmentBuffer::new([Segment::new([5], 2)])));
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([
-					Segment::new([1, 2], 1),
-					Segment::new([5], 2),
-					Segment::new([3, 4], 1),
-				])
-			)
-		}
-
-		#[test]
-		fn replace_middle() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2, 3, 4], 1)]);
-			buf.splice(2..=2, Some(SegmentBuffer::new([Segment::new([5], 2)])));
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([
-					Segment::new([1, 2], 1),
-					Segment::new([5], 2),
-					Segment::new([4], 1),
-				])
-			)
-		}
-
-		#[test]
-		fn replace_middle_overlap() {
-			let mut buf = SegmentBuffer::new([Segment::new([1, 2], 1), Segment::new([3, 4], 1)]);
-			buf.splice(1..3, Some(SegmentBuffer::new([Segment::new([5], 2)])));
-			assert_eq!(
-				buf,
-				SegmentBuffer::new([
-					Segment::new([1], 1),
-					Segment::new([5], 2),
-					Segment::new([4], 1),
-				])
-			)
-		}
+impl<M: Clone + fmt::Debug> Default for SegmentBuffer<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<M: Clone + PartialEq + fmt::Debug> SegmentBuffer<M> {
+	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize>, value: &T)
+	where
+		M: MetaApply<T>,
+	{
+		self.meta
+			.apply_meta(bounds_to_exclusive(range, self.len()), value)
 	}
 }

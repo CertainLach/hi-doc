@@ -72,7 +72,7 @@ pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
 	let mut right = if let Some(rightmost) = annotations
 		.iter()
 		.filter(|a| !processed.contains(&a.id))
-		.filter(|a| !a.left && !a.right.is_empty() && a.right.data().all(|c| *c != '\n'))
+		.filter(|a| !a.left && !a.right.is_empty() && a.right.chars().all(|c| c != '\n'))
 		.filter(|a| can_use(&occupied, &a.ranges))
 		.max_by_key(|a| {
 			(
@@ -98,7 +98,7 @@ pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
 		if let Some(most) = annotations
 			.iter()
 			.filter(|a| !processed.contains(&a.id))
-			.filter(|a| a.left && a.right.data().all(|c| *c != '\n'))
+			.filter(|a| a.left && a.right.chars().all(|c| c != '\n'))
 			.filter(|a| can_use(&occupied, &a.ranges))
 			.min_by_key(|a| {
 				(
@@ -154,10 +154,12 @@ pub(crate) fn apply_inline_annotations(
 		}
 	}
 	if let Some((formatting, right)) = right {
-		text.extend(Text::single(
-			[crate::chars::arrow::BOTTOM.arrow_inline, ' '],
-			formatting,
-		));
-		text.extend(right);
+		text.extend([
+			Text::segment(
+				format!("{} ", crate::chars::arrow::BOTTOM.arrow_inline),
+				formatting,
+			),
+			right,
+		]);
 	}
 }

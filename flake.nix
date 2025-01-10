@@ -1,34 +1,57 @@
 {
   description = "Diagnostics library";
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
+    };
+    crane = {
+      url = "github:ipetkov/crane";
+    };
+    shelly = {
+      url = "github:CertainLach/shelly";
+      inputs = {
+        flake-parts.follows = "flake-parts";
+        nixpkgs.follows = "nixpkgs";
+      };
     };
   };
-  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs {
+  outputs = inputs:
+    inputs.flake-parts.lib.mkFlake {inherit inputs;}
+    {
+      imports = [inputs.shelly.flakeModule];
+      systems = inputs.nixpkgs.lib.systems.flakeExposed;
+      perSystem = {
+        self',
+        system,
+        pkgs,
+        lib,
+        ...
+      }: let
+        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
+      in {
+        _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [ rust-overlay.overlays.default ];
+          overlays = [inputs.rust-overlay.overlays.default];
         };
-        rust = ((pkgs.rustChannelOf { date = "2022-12-13"; channel = "nightly"; }).default.override {
-          extensions = [ "rust-src" "miri" ];
-        });
-      in
-      rec {
-        devShell = pkgs.mkShell {
-          nativeBuildInputs = with pkgs;[
+        shelly.shells.default = {
+          factory = craneLib.devShell;
+          packages = with pkgs; [
             rust
             cargo-edit
-            lld
             asciinema
+
+              cmake
           ];
+          environment.NIX_FMT = lib.getExe self'.formatter;
         };
-      }
-    );
+        formatter = pkgs.alejandra;
+      };
+    };
 }

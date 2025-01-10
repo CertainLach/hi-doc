@@ -208,6 +208,9 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 					size += 1;
 				}
 				for _ in 0..size {
+					// TODO: First character of tab offset would be better some unicode alternative
+					// However, there isn't one, that is not wide, so... Wide character should be inserted here
+					// with appropriate fixup.
 					out.push(' ');
 				}
 				text = &text[1..];

@@ -8,10 +8,7 @@ use num_traits::PrimInt;
 use range_map::RangeSet;
 
 use crate::{
-	annotation::AnnotationId,
-	anomaly_fixer::apply_fixup,
-	segment::{Segment, SegmentBuffer},
-	Formatting, Text,
+	annotation::AnnotationId, anomaly_fixer::apply_fixup, segment::SegmentBuffer, Formatting, Text,
 };
 
 /// This kind of annotations is not used directly, instead library creates those
@@ -118,10 +115,11 @@ pub(crate) fn generate_range_annotations(
 		use crate::chars::single::*;
 		let chars = if bottom { &BOTTOM } else { &TOP };
 		for layer in per_line_ranges.iter() {
-			let mut fmtlayer = SegmentBuffer::new([Segment::new(
-				vec![' '; max_range_display + 1],
+			let mut fmtlayer = SegmentBuffer::segment(
+				// TODO: Avoid allocation?
+				&" ".repeat(max_range_display + 1),
 				Formatting::default(),
-			)]);
+			);
 
 			let mut useless = true;
 			for annotation in layer
@@ -143,10 +141,10 @@ pub(crate) fn generate_range_annotations(
 					};
 					fmtlayer.splice(
 						char_to_display(range.start)..=char_to_display(range.end),
-						Some(SegmentBuffer::new([Segment::new(
+						Some(SegmentBuffer::segment_chars(
 							data,
 							annotation.formatting.clone(),
-						)])),
+						)),
 					);
 				}
 			}
@@ -171,14 +169,14 @@ pub(crate) fn generate_range_annotations(
 						if let Some((keep_style, replacement)) = cross(chars, c) {
 							other.splice(
 								char_to_display(start)..=char_to_display(start),
-								Some(SegmentBuffer::new([Segment::new(
-									[replacement],
+								Some(SegmentBuffer::segment(
+									&replacement.to_string(),
 									if keep_style {
-										orig_fmt
+										orig_fmt.clone()
 									} else {
 										annotation.formatting.clone()
 									},
-								)])),
+								)),
 							)
 						}
 					}
@@ -226,10 +224,8 @@ pub(crate) fn generate_range_annotations(
 		use crate::chars::arrow::*;
 		let chars = if bottom { &BOTTOM } else { &TOP };
 		for annotation in &annotations {
-			let mut fmtlayer = SegmentBuffer::new([Segment::new(
-				vec![' '; max_range_display + 1],
-				Formatting::default(),
-			)]);
+			let mut fmtlayer =
+				SegmentBuffer::segment(&" ".repeat(max_range_display + 1), Formatting::default());
 			let mut extralayers = Vec::new();
 
 			let starts = annotation
@@ -260,20 +256,20 @@ pub(crate) fn generate_range_annotations(
 				};
 				fmtlayer.splice(
 					char_to_display(*start)..=char_to_display(*start),
-					Some(SegmentBuffer::new([Segment::new(
-						[c],
+					Some(SegmentBuffer::segment(
+						&c.to_string(),
 						annotation.formatting.clone(),
-					)])),
+					)),
 				);
 			}
 			let annotation_id = if annotation.left {
 				let size = char_to_display(min) - char_to_display(min_pos);
 				fmtlayer.splice(
 					char_to_display(min_pos)..char_to_display(min),
-					Some(SegmentBuffer::new([Segment::new(
-						vec![chars.arrow_cont; size],
+					Some(SegmentBuffer::segment(
+						chars.arrow_cont.to_string().repeat(size),
 						annotation.formatting.clone(),
-					)])),
+					)),
 				);
 				Some(annotation.id)
 			} else {
@@ -285,20 +281,20 @@ pub(crate) fn generate_range_annotations(
 				let size = max_range_display - char_to_display(max) + 2;
 				fmtlayer.splice(
 					char_to_display(max) + 1..max_range_display + 1,
-					Some(SegmentBuffer::new([Segment::new(
-						vec![chars.arrow_cont; size],
+					Some(SegmentBuffer::segment(
+						chars.arrow_cont.to_string().repeat(size),
 						annotation.formatting.clone(),
-					)])),
+					)),
 				);
-				fmtlayer.extend(Text::single([' '], Default::default()));
+				fmtlayer.extend([Text::segment(" ", Default::default())]);
 				let lines = right.split('\n');
-				fmtlayer.extend(lines[0].clone());
+				fmtlayer.append(lines[0].clone());
 				for right in lines.iter().skip(1) {
-					let mut fmtlayer = SegmentBuffer::new([Segment::new(
-						vec![' '; max_range_display],
+					let mut fmtlayer = SegmentBuffer::segment(
+						" ".repeat(max_range_display),
 						Formatting::default(),
-					)]);
-					fmtlayer.extend(right.clone());
+					);
+					fmtlayer.append(right.clone());
 					extralayers.push((None, fmtlayer));
 				}
 			}
@@ -308,10 +304,10 @@ pub(crate) fn generate_range_annotations(
 				}
 				fmtlayer.splice(
 					i..=i,
-					Some(SegmentBuffer::new([Segment::new(
-						[chars.arrow_cont],
+					Some(SegmentBuffer::segment(
+						chars.arrow_cont.to_string(),
 						annotation.formatting.clone(),
-					)])),
+					)),
 				);
 			}
 
@@ -327,14 +323,14 @@ pub(crate) fn generate_range_annotations(
 					if let Some((keep_style, replacement)) = cross(chars, c) {
 						affected.1.splice(
 							char_to_display(start)..=char_to_display(start),
-							Some(SegmentBuffer::new([Segment::new(
-								[replacement],
+							Some(SegmentBuffer::segment(
+								replacement.to_string(),
 								if keep_style {
-									orig_fmt
+									orig_fmt.clone()
 								} else {
 									annotation.formatting.clone()
 								},
-							)])),
+							)),
 						)
 					}
 				}

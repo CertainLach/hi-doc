@@ -1,7 +1,6 @@
-use crate::segment::{Meta, MetaApply, Segment, SegmentBuffer};
+use crate::segment::{Meta, MetaApply, SegmentBuffer};
 
-pub type TextPart = Segment<char, Formatting>;
-pub type Text = SegmentBuffer<char, Formatting>;
+pub type Text = SegmentBuffer<Formatting>;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct Formatting {
@@ -71,17 +70,19 @@ impl Formatting {
 pub fn text_to_ansi(buf: &Text, out: &mut String) {
 	use std::fmt::Write;
 
-	for frag in buf.segments() {
-		if let Some(color) = frag.meta().color {
+	for (text, meta) in buf.iter() {
+		if let Some(color) = meta.color {
 			let [r, g, b, _a] = u32::to_be_bytes(color);
 			write!(out, "\x1b[38;2;{r};{g};{b}m").expect("no fmt error");
 		}
-		if let Some(bg_color) = frag.meta().bg_color {
+		if let Some(bg_color) = meta.bg_color {
 			let [r, g, b, _a] = u32::to_be_bytes(bg_color);
 			write!(out, "\x1b[48;2;{r};{g};{b}m").expect("no fmt error")
 		}
-		write!(out, "{}", frag.iter().copied().collect::<String>()).expect("no fmt error");
-		if frag.meta().color.is_some() || frag.meta().bg_color.is_some() {
+		for chunk in text {
+			write!(out, "{chunk}").expect("no fmt error");
+		}
+		if meta.color.is_some() || meta.bg_color.is_some() {
 			write!(out, "\x1b[0m").expect("no fmt error")
 		}
 	}
