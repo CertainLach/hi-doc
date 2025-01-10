@@ -117,7 +117,7 @@ pub(crate) fn generate_range_annotations(
 		for layer in per_line_ranges.iter() {
 			let mut fmtlayer = SegmentBuffer::segment(
 				// TODO: Avoid allocation?
-				&" ".repeat(max_range_display + 1),
+				" ".repeat(max_range_display + 1),
 				Formatting::default(),
 			);
 
@@ -170,7 +170,7 @@ pub(crate) fn generate_range_annotations(
 							other.splice(
 								char_to_display(start)..=char_to_display(start),
 								Some(SegmentBuffer::segment(
-									&replacement.to_string(),
+									replacement.to_string(),
 									if keep_style {
 										orig_fmt.clone()
 									} else {
@@ -225,7 +225,7 @@ pub(crate) fn generate_range_annotations(
 		let chars = if bottom { &BOTTOM } else { &TOP };
 		for annotation in &annotations {
 			let mut fmtlayer =
-				SegmentBuffer::segment(&" ".repeat(max_range_display + 1), Formatting::default());
+				SegmentBuffer::segment(" ".repeat(max_range_display + 1), Formatting::default());
 			let mut extralayers = Vec::new();
 
 			let starts = annotation
@@ -257,7 +257,7 @@ pub(crate) fn generate_range_annotations(
 				fmtlayer.splice(
 					char_to_display(*start)..=char_to_display(*start),
 					Some(SegmentBuffer::segment(
-						&c.to_string(),
+						c.to_string(),
 						annotation.formatting.clone(),
 					)),
 				);

@@ -1,5 +1,6 @@
 use core::fmt;
 use std::cell::Ref;
+use std::cmp::Ordering;
 use std::ops::{Bound, Range, RangeBounds};
 /// Mutable rich text implementation
 use std::str;
@@ -173,10 +174,10 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 		JumpRopeBufCharIter::new(self.rope.borrow(), |v| v.chars())
 	}
 	pub fn resize(&mut self, size: usize, char: char, meta: M) {
-		if size < self.len() {
-			self.remove(size..);
-		} else if size > self.len() {
-			self.extend([Self::repeat_char(char, size - self.len(), meta)])
+		match size.cmp(&self.len()) {
+			Ordering::Less => self.remove(size..),
+			Ordering::Greater => self.extend([Self::repeat_char(char, size - self.len(), meta)]),
+			Ordering::Equal => {}
 		}
 	}
 	pub fn split_at(self, pos: usize) -> (Self, Self) {
@@ -216,9 +217,9 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 }
 
 impl<M: Clone + fmt::Debug> Default for SegmentBuffer<M> {
-    fn default() -> Self {
-        Self::new()
-    }
+	fn default() -> Self {
+		Self::new()
+	}
 }
 impl<M: Clone + PartialEq + fmt::Debug> SegmentBuffer<M> {
 	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize>, value: &T)

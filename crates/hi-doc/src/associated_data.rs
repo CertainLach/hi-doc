@@ -163,6 +163,7 @@ impl<D: Clone + fmt::Debug> AssociatedData<D> {
 			return (self, Self::new());
 		}
 
+		#[allow(clippy::mutable_key_type, reason = "invariants are held")]
 		let mut other = self.data.split_off(&MutableOffset(Cell::new(offset)));
 
 		// Do we need to clone split element?
