@@ -2,6 +2,7 @@ extern crate hi_doc_jumprope as jumprope;
 
 use std::{
 	collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+	mem,
 	ops::RangeInclusive,
 };
 
@@ -20,6 +21,8 @@ use single_line::LineAnnotation;
 
 pub use crate::formatting::Formatting;
 
+use self::annotation::AnnotationLocation;
+
 mod annotation;
 mod anomaly_fixer;
 pub(crate) mod associated_data;
@@ -27,6 +30,7 @@ mod chars;
 mod formatting;
 mod inline;
 mod single_line;
+use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 struct RawLine {
@@ -166,6 +170,11 @@ impl Line {
 #[derive(Debug)]
 pub struct Source {
 	lines: Vec<Line>,
+}
+impl Source {
+	fn wrap_border(mut self) -> Self {
+		self
+	}
 }
 
 fn cleanup_nops(source: &mut Source) {
@@ -433,16 +442,25 @@ fn generate_annotations(source: &mut Source, opts: &Opts) {
 		};
 
 		let char_to_display_fixup = fixup_char_to_display(line.line.chars());
-		let mut extra = single_line::generate_range_annotations(
-			line.annotations.clone(),
-			&char_to_display_fixup,
-			&hide_ranges_for,
-			false,
-		);
-		extra.reverse();
-		// TODO: instead of writing generated annotations into lines, return them from this function, and apply later
-		line.top_annotations = extra;
-		line.annotations.truncate(0);
+
+		let (above, below) = mem::take(&mut line.annotations)
+			.into_iter()
+			.partition::<Vec<LineAnnotation>, _>(|v| v.location.is_above());
+
+		for (annotations, above) in [(above, true), (below, false)] {
+			let mut extra = single_line::generate_range_annotations(
+				annotations,
+				&char_to_display_fixup,
+				&hide_ranges_for,
+				!above,
+			);
+			if above {
+				extra.reverse();
+				line.top_annotations = extra;
+			} else {
+				line.bottom_annotations = extra;
+			}
+		}
 	}
 }
 
@@ -515,8 +533,11 @@ fn process(
 	apply_annotations(source);
 	// Connect annotation lines
 	draw_line_connections(source, annotation_formats);
+
+	{}
 	// Apply line numbers
 	draw_line_numbers(source);
+
 	// To raw
 	{
 		for line in &mut source.lines {
@@ -631,7 +652,6 @@ fn parse(
 		let end = *r.end();
 		let start = offset_to_linecol(start, &linestarts);
 		let end = offset_to_linecol(end, &linestarts);
-		dbg!(start, end);
 
 		for i in start.line..=end.line {
 			let line = &mut lines[i];
@@ -689,6 +709,7 @@ fn parse(
 				} else {
 					Text::new()
 				},
+				location: annotation.location,
 			});
 			line.fold = false;
 		}
@@ -720,6 +741,7 @@ pub fn source_to_ansi(source: &Source) -> String {
 	out
 }
 
+#[derive(Debug)]
 pub struct FormattingGenerator {
 	rand: SmallRng,
 }
@@ -745,6 +767,7 @@ impl FormattingGenerator {
 	}
 }
 
+#[derive(Debug)]
 pub struct SnippetBuilder {
 	src: String,
 	generator: FormattingGenerator,
@@ -777,7 +800,6 @@ impl SnippetBuilder {
 		let mut highlight: Option<Highlight> = None;
 		for v in iter {
 			let v = v.expect("e");
-			dbg!(&v);
 			match v {
 				tree_sitter_highlight::HighlightEvent::Source { start, end } => {
 					if let Some(hi) = &highlight {
@@ -794,7 +816,6 @@ impl SnippetBuilder {
 					highlight = None;
 				}
 			}
-			dbg!(v);
 		}
 		self.highlights_before.extend(highlights);
 	}
@@ -809,6 +830,7 @@ impl SnippetBuilder {
 		// 	&AddColorToUncolored(u32::from_be_bytes([r, g, b, 0])),
 		// );
 		AnnotationBuilder {
+			location: AnnotationLocation::Any,
 			snippet: self,
 			priority: 0,
 			formatting,
@@ -844,12 +866,14 @@ impl SnippetBuilder {
 }
 
 #[must_use]
+#[derive(Debug)]
 pub struct AnnotationBuilder<'s> {
 	snippet: &'s mut SnippetBuilder,
 	priority: usize,
 	formatting: Formatting,
 	ranges: Vec<Range<usize>>,
 	text: Text,
+	location: AnnotationLocation,
 }
 
 impl AnnotationBuilder<'_> {
@@ -867,12 +891,33 @@ impl AnnotationBuilder<'_> {
 		}
 		self
 	}
+	fn location(mut self, location: AnnotationLocation) -> Self {
+		assert!(
+			self.location.is_any(),
+			"location methods should only be called once"
+		);
+		self.location = location;
+		self
+	}
+	pub fn above(self) -> Self {
+		self.location(AnnotationLocation::Above)
+	}
+	pub fn below(self) -> Self {
+		self.location(AnnotationLocation::Below)
+	}
+	pub fn above_or_inline(self) -> Self {
+		self.location(AnnotationLocation::AboveOrInline)
+	}
+	pub fn below_or_inline(self) -> Self {
+		self.location(AnnotationLocation::BelowOrInline)
+	}
 	pub fn build(self) {
 		self.snippet.annotations.push(Annotation {
 			priority: self.priority,
 			formatting: self.formatting,
 			ranges: self.ranges.into_iter().collect(),
 			text: self.text,
+			location: self.location,
 		});
 	}
 }
@@ -881,6 +926,8 @@ impl AnnotationBuilder<'_> {
 mod tests {
 	use itertools::Format;
 	use tree_sitter_highlight::HighlightConfiguration;
+
+	use self::annotation::AnnotationLocation;
 
 	use super::*;
 
@@ -898,10 +945,12 @@ mod tests {
 		snippet
 			.warning(Text::segment("Local name", default()))
 			.range(10..=12)
+			.above()
 			.build();
 		snippet
 			.info(Text::segment("Equals", default()))
 			.range(14..=14)
+			.above()
 			.build();
 		snippet
 			.note(Text::segment("Connected definition", default()))
@@ -940,14 +989,17 @@ mod tests {
 		snippet
 			.info(Text::segment("a", default()))
 			.range(0..=2)
+			.above()
 			.build();
 		snippet
 			.info(Text::segment("b", default()))
 			.range(3..=5)
+			.above()
 			.build();
 		snippet
 			.info(Text::segment("c", default()))
 			.range(6..=8)
+			.above()
 			.build();
 		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
@@ -963,18 +1015,21 @@ mod tests {
 					formatting: Formatting::color(0xff000000),
 					ranges: [Range::new(0, 2)].into_iter().collect(),
 					text: Text::segment("a", default()),
+					location: AnnotationLocation::BelowOrInline,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x00ff0000),
 					ranges: [Range::new(3, 5)].into_iter().collect(),
 					text: Text::segment("b", default()),
+					location: AnnotationLocation::BelowOrInline,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x0000ff00),
 					ranges: [Range::new(6, 8)].into_iter().collect(),
 					text: Text::segment("c", default()),
+					location: AnnotationLocation::BelowOrInline,
 				},
 			],
 			&Opts {
@@ -998,12 +1053,14 @@ mod tests {
 					formatting: Formatting::color(0xff000000),
 					ranges: [Range::new(17, 17)].into_iter().collect(),
 					text: Text::segment("Line start", default()),
+					location: AnnotationLocation::Below,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x00ff0000),
 					ranges: [Range::new(18, 18)].into_iter().collect(),
 					text: Text::segment("Aligned", default()),
+					location: AnnotationLocation::Below,
 				},
 			],
 			&Opts {
@@ -1014,7 +1071,6 @@ mod tests {
 			},
 			vec![],
 		);
-		dbg!(&s);
 		println!("{}", source_to_ansi(&s))
 	}
 
@@ -1075,7 +1131,7 @@ mod tests {
 			))
 			.range(22..=510)
 			.build();
-		let s = snippet.build();
+		let s = snippet.build().wrap_border();
 		println!("{}", source_to_ansi(&s))
 	}
 }

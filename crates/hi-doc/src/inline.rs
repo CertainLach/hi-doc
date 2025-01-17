@@ -47,6 +47,7 @@ pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
 
 	let mut annotation = if let Some(leftmost) = annotations
 		.iter()
+		.filter(|a| a.location.is_inline())
 		.filter(|a| !processed.contains(&a.id))
 		.filter(|a| a.left && a.right.is_empty())
 		.filter(|a| can_use(&occupied, &a.ranges))
@@ -71,6 +72,7 @@ pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
 
 	let mut right = if let Some(rightmost) = annotations
 		.iter()
+		.filter(|a| a.location.is_inline())
 		.filter(|a| !processed.contains(&a.id))
 		.filter(|a| !a.left && !a.right.is_empty() && a.right.chars().all(|c| c != '\n'))
 		.filter(|a| can_use(&occupied, &a.ranges))

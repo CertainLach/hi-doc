@@ -8,7 +8,7 @@ use num_traits::PrimInt;
 use range_map::RangeSet;
 
 use crate::{
-	annotation::AnnotationId, anomaly_fixer::apply_fixup, segment::SegmentBuffer, Formatting, Text,
+	annotation::{AnnotationId, AnnotationLocation}, anomaly_fixer::apply_fixup, segment::SegmentBuffer, Formatting, Text,
 };
 
 /// This kind of annotations is not used directly, instead library creates those
@@ -23,6 +23,8 @@ pub(crate) struct LineAnnotation {
 	pub left: bool,
 	/// What text to display to the right of annotated line
 	pub right: Text,
+
+	pub location: AnnotationLocation,
 }
 
 /// Distribute annotations per layers

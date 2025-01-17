@@ -19,7 +19,7 @@ pub struct Opts {
 	pub context_lines: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Annotation {
 	pub priority: usize,
 	pub formatting: Formatting,
@@ -27,4 +27,29 @@ pub struct Annotation {
 	/// Should not be empty
 	pub ranges: RangeSet<usize>,
 	pub text: Text,
+	pub location: AnnotationLocation,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub enum AnnotationLocation {
+	#[default]
+	Any,
+	Above,
+	Below,
+	AboveOrInline,
+	BelowOrInline,
+}
+impl AnnotationLocation {
+	pub fn is_any(&self) -> bool {
+		matches!(self, Self::Any)
+	}
+	pub fn is_inline(&self) -> bool {
+		matches!(self, Self::Any | Self::AboveOrInline | Self::BelowOrInline)
+	}
+	pub fn is_above(&self) -> bool {
+		matches!(self, Self::Any | Self::Above | Self::AboveOrInline)
+	}
+	pub fn is_below(&self) -> bool {
+		matches!(self, Self::Any | Self::Below | Self::BelowOrInline)
+	}
 }
