@@ -31,7 +31,9 @@ within a library.
 
 - [x] Formatting of the annotation text itself
 
-- [ ] Syntax highlightning in annotated text
+- [x] Syntax highlightning in annotated text
+
+  ![syntax highlightning](./fixtures/syntax.png)
 
 - [ ] Support for non-colored terminals
 

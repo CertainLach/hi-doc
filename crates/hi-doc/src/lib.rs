@@ -552,6 +552,7 @@ fn linestarts(str: &str) -> BTreeSet<usize> {
 	}
 	linestarts
 }
+#[derive(Debug, Clone, Copy)]
 struct LineCol {
 	line: usize,
 	column: usize,
@@ -571,9 +572,21 @@ fn offset_to_linecol(mut offset: usize, linestarts: &BTreeSet<usize>) -> LineCol
 	}
 }
 
-fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
+fn parse(
+	txt: &str,
+	annotations: &[Annotation],
+	opts: &Opts,
+	mut highlights: Vec<(RangeInclusive<usize>, Formatting)>,
+) -> Source {
 	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, opts.tab_width);
 	let mut annotations = annotations.to_vec();
+
+	for (r, _) in highlights.iter_mut() {
+		let (mut start, mut end_exclusive) = (*r.start(), *r.end() + 1);
+		apply_fixup(&mut start, &byte_to_char_fixup);
+		apply_fixup(&mut end_exclusive, &byte_to_char_fixup);
+		*r = start..=end_exclusive - 1;
+	}
 
 	// Convert byte offsets to char offsets
 	for annotation in annotations.iter_mut() {
@@ -612,6 +625,27 @@ fn parse(txt: &str, annotations: &[Annotation], opts: &Opts) -> Source {
 		})
 		.map(Line::Text)
 		.collect();
+
+	for (r, f) in highlights.iter() {
+		let start = *r.start();
+		let end = *r.end();
+		let start = offset_to_linecol(start, &linestarts);
+		let end = offset_to_linecol(end, &linestarts);
+		dbg!(start, end);
+
+		for i in start.line..=end.line {
+			let line = &mut lines[i];
+			if let Line::Text(text_line) = line {
+				let start = if i == start.line { start.column } else { 0 };
+				let end = if i == end.line {
+					end.column
+				} else {
+					text_line.line.len() - 1
+				};
+				text_line.line.apply_meta(start..=end, f);
+			}
+		}
+	}
 
 	for (aid, annotation) in annotations.iter().enumerate() {
 		let mut line_ranges: BTreeMap<usize, RangeSet<usize>> = BTreeMap::new();
@@ -715,6 +749,7 @@ pub struct SnippetBuilder {
 	src: String,
 	generator: FormattingGenerator,
 	annotations: Vec<Annotation>,
+	highlights_before: Vec<(RangeInclusive<usize>, Formatting)>,
 }
 impl SnippetBuilder {
 	pub fn new(src: impl AsRef<str>) -> Self {
@@ -722,7 +757,46 @@ impl SnippetBuilder {
 			src: src.as_ref().to_string(),
 			generator: FormattingGenerator::new(src.as_ref().as_bytes()),
 			annotations: Vec::new(),
+			highlights_before: Vec::new(),
 		}
+	}
+	#[cfg(feature = "tree-sitter")]
+	pub fn highlight(
+		&mut self,
+		config: tree_sitter_highlight::HighlightConfiguration,
+		fmt: impl Fn(usize, &str) -> Formatting,
+	) {
+		use tree_sitter_highlight::{Highlight, Highlighter};
+
+		let mut highlighter = Highlighter::new();
+		let iter = highlighter
+			.highlight(&config, self.src.as_bytes(), None, |_| None)
+			.expect("highlight");
+
+		let mut highlights = Vec::new();
+		let mut highlight: Option<Highlight> = None;
+		for v in iter {
+			let v = v.expect("e");
+			dbg!(&v);
+			match v {
+				tree_sitter_highlight::HighlightEvent::Source { start, end } => {
+					if let Some(hi) = &highlight {
+						let f = fmt(hi.0, &self.src[start..end]);
+						highlights.push((start..=end - 1, f));
+					}
+				}
+				tree_sitter_highlight::HighlightEvent::HighlightStart(s) => {
+					assert!(highlight.is_none());
+					highlight = Some(s);
+				}
+				tree_sitter_highlight::HighlightEvent::HighlightEnd => {
+					assert!(highlight.is_some());
+					highlight = None;
+				}
+			}
+			dbg!(v);
+		}
+		self.highlights_before.extend(highlights);
 	}
 	fn custom(&mut self, custom_color: Gamut, text: Text) -> AnnotationBuilder<'_> {
 		let mut color = self.generator.next();
@@ -764,6 +838,7 @@ impl SnippetBuilder {
 				tab_width: 4,
 				context_lines: 2,
 			},
+			self.highlights_before,
 		)
 	}
 }
@@ -804,6 +879,9 @@ impl AnnotationBuilder<'_> {
 
 #[cfg(test)]
 mod tests {
+	use itertools::Format;
+	use tree_sitter_highlight::HighlightConfiguration;
+
 	use super::*;
 
 	fn default<T: Default>() -> T {
@@ -905,6 +983,7 @@ mod tests {
 				tab_width: 4,
 				context_lines: 2,
 			},
+			vec![],
 		);
 		println!("{}", source_to_ansi(&s))
 	}
@@ -933,6 +1012,7 @@ mod tests {
 				tab_width: 4,
 				context_lines: 2,
 			},
+			vec![],
 		);
 		dbg!(&s);
 		println!("{}", source_to_ansi(&s))
@@ -962,10 +1042,29 @@ mod tests {
 		}
 	}"#;
 		let mut snippet = SnippetBuilder::new(src);
+		let language = tree_sitter_rust::LANGUAGE;
+		let mut config = HighlightConfiguration::new(
+			language.into(),
+			"rust",
+			tree_sitter_rust::HIGHLIGHTS_QUERY,
+			tree_sitter_rust::INJECTIONS_QUERY,
+			"",
+		)
+		.expect("config");
+		config.configure(&["punctuation.bracket", "keyword", "property"]);
+		snippet.highlight(config, |name, _code| {
+			if name == 1 {
+				Formatting::rgb([255, 50, 50])
+			} else if name == 2 {
+				Formatting::rgb([50, 150, 50])
+			} else {
+				Formatting::rgb([50, 255, 255])
+			}
+		});
 		snippet
 			.error(Text::segment(
 				"expected `Option<String>` because of return type",
-				default(),
+				Formatting::default(),
 			))
 			.range(5..=18)
 			.build();

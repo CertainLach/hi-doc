@@ -10,16 +10,8 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane = {
-      url = "github:ipetkov/crane";
-    };
-    shelly = {
-      url = "github:CertainLach/shelly";
-      inputs = {
-        flake-parts.follows = "flake-parts";
-        nixpkgs.follows = "nixpkgs";
-      };
-    };
+    crane.url = "github:ipetkov/crane";
+    shelly.url = "github:CertainLach/shelly";
   };
   outputs = inputs:
     inputs.flake-parts.lib.mkFlake {inherit inputs;}

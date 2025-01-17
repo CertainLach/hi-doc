@@ -61,29 +61,47 @@ impl Formatting {
 		Self::color(u32::from_be_bytes([r, g, b, 0]))
 	}
 
+	pub fn underline(mut self) -> Self {
+		self.underline = true;
+		self
+	}
+
+	pub fn bold(mut self) -> Self {
+		self.bold = true;
+		self
+	}
+
 	pub fn decoration(mut self) -> Self {
 		self.decoration = true;
 		self
 	}
 }
 
+const E: &str = "\x1b[";
+
 pub fn text_to_ansi(buf: &Text, out: &mut String) {
 	use std::fmt::Write;
 
 	for (text, meta) in buf.iter() {
+		if meta.bold {
+			write!(out, "{E}1m").expect("no fmt error");
+		}
+		if meta.underline {
+			write!(out, "{E}4m").expect("no fmt error");
+		}
 		if let Some(color) = meta.color {
 			let [r, g, b, _a] = u32::to_be_bytes(color);
-			write!(out, "\x1b[38;2;{r};{g};{b}m").expect("no fmt error");
+			write!(out, "{E}38;2;{r};{g};{b}m").expect("no fmt error");
 		}
 		if let Some(bg_color) = meta.bg_color {
 			let [r, g, b, _a] = u32::to_be_bytes(bg_color);
-			write!(out, "\x1b[48;2;{r};{g};{b}m").expect("no fmt error")
+			write!(out, "{E}48;2;{r};{g};{b}m").expect("no fmt error")
 		}
 		for chunk in text {
 			write!(out, "{chunk}").expect("no fmt error");
 		}
-		if meta.color.is_some() || meta.bg_color.is_some() {
-			write!(out, "\x1b[0m").expect("no fmt error")
+		if meta.color.is_some() || meta.bg_color.is_some() || meta.underline || meta.bold {
+			write!(out, "{E}0m").expect("no fmt error")
 		}
 	}
 }
