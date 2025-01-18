@@ -426,40 +426,60 @@ fn generate_annotations(source: &mut Source, opts: &Opts) {
 		.flat_map(Line::as_text_mut)
 		.filter(|t| !t.annotations.is_empty())
 	{
-		let hide_ranges_for = if opts.apply_to_orig {
-			let parsed = inline::group_singleline(&line.annotations);
-			assert!(line.annotation.is_none());
-			line.annotation = parsed.annotation;
-			inline::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
+		generate_annotations_line(line, opts);
+	}
+}
 
-			line.annotations
-				.retain(|a| !parsed.processed.contains(&a.id));
-			line.fold = false;
+fn generate_annotations_line(line: &mut TextLine, opts: &Opts) {
+	// We don't need ranges for those lines, because they are embedded into the code itself.
+	let hide_ranges_for = if opts.apply_to_orig && opts.color_available {
+		let parsed = inline::group_singleline(&line.annotations);
+		assert!(line.annotation.is_none());
+		line.annotation = parsed.annotation;
+		inline::apply_inline_annotations(&mut line.line, &parsed.inline, parsed.right);
 
-			parsed.hide_ranges_for
+		line.annotations
+			.retain(|a| !parsed.processed.contains(&a.id));
+		line.fold = false;
+
+		parsed.hide_ranges_for
+	} else {
+		HashSet::new()
+	};
+
+	let char_to_display_fixup = fixup_char_to_display(line.line.chars());
+
+	let total = line.annotations.len();
+
+	let (mut above, rest) = mem::take(&mut line.annotations)
+		.into_iter()
+		.partition::<Vec<LineAnnotation>, _>(|v| v.location.is_above() && !v.location.is_below());
+	let (mut below, mut both) = rest
+		.into_iter()
+		.partition::<Vec<LineAnnotation>, _>(|v| v.location.is_below() && !v.location.is_above());
+
+	let target_above = (total + above.len() - below.len() + 1) / 2;
+	let needed_above = target_above.saturating_sub(above.len());
+	dbg!(total, target_above);
+
+	let below_both = both.split_off(needed_above.min(both.len()));
+	let above_both = both;
+
+	above.extend(above_both);
+	below.extend(below_both);
+
+	for (annotations, above) in [(above, true), (below, false)] {
+		let mut extra = single_line::generate_range_annotations(
+			annotations,
+			&char_to_display_fixup,
+			&hide_ranges_for,
+			!above,
+		);
+		if above {
+			extra.reverse();
+			line.top_annotations = extra;
 		} else {
-			HashSet::new()
-		};
-
-		let char_to_display_fixup = fixup_char_to_display(line.line.chars());
-
-		let (above, below) = mem::take(&mut line.annotations)
-			.into_iter()
-			.partition::<Vec<LineAnnotation>, _>(|v| v.location.is_above());
-
-		for (annotations, above) in [(above, true), (below, false)] {
-			let mut extra = single_line::generate_range_annotations(
-				annotations,
-				&char_to_display_fixup,
-				&hide_ranges_for,
-				!above,
-			);
-			if above {
-				extra.reverse();
-				line.top_annotations = extra;
-			} else {
-				line.bottom_annotations = extra;
-			}
+			line.bottom_annotations = extra;
 		}
 	}
 }
@@ -859,6 +879,7 @@ impl SnippetBuilder {
 				fold: true,
 				tab_width: 4,
 				context_lines: 2,
+				color_available: false,
 			},
 			self.highlights_before,
 		)
@@ -1037,6 +1058,7 @@ mod tests {
 				fold: true,
 				tab_width: 4,
 				context_lines: 2,
+				color_available: true,
 			},
 			vec![],
 		);
@@ -1068,6 +1090,7 @@ mod tests {
 				fold: false,
 				tab_width: 4,
 				context_lines: 2,
+				color_available: true,
 			},
 			vec![],
 		);

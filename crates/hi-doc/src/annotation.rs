@@ -17,6 +17,9 @@ pub struct Opts {
 
 	/// Minimum lines of code above and below annotated line
 	pub context_lines: usize,
+
+	/// Allow formatting which is only recognizable by color.
+	pub color_available: bool,
 }
 
 #[derive(Clone, Debug)]
