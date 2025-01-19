@@ -44,6 +44,13 @@ impl MetaApply<AddColorToUncolored> for Formatting {
 }
 
 impl Formatting {
+	pub fn listchar() -> Self {
+		Self {
+			color: Some(0x92837400),
+			decoration: true,
+			..Default::default()
+		}
+	}
 	pub fn line_number() -> Self {
 		Self {
 			color: Some(0x92837400),

@@ -432,7 +432,7 @@ fn generate_annotations(source: &mut Source, opts: &Opts) {
 
 fn generate_annotations_line(line: &mut TextLine, opts: &Opts) {
 	// We don't need ranges for those lines, because they are embedded into the code itself.
-	let hide_ranges_for = if opts.apply_to_orig && opts.color_available {
+	let hide_ranges_for = if opts.colored_range_display && !opts.colorblind_output {
 		let parsed = inline::group_singleline(&line.annotations);
 		assert!(line.annotation.is_none());
 		line.annotation = parsed.annotation;
@@ -460,7 +460,6 @@ fn generate_annotations_line(line: &mut TextLine, opts: &Opts) {
 
 	let target_above = (total + above.len() - below.len() + 1) / 2;
 	let needed_above = target_above.saturating_sub(above.len());
-	dbg!(total, target_above);
 
 	let below_both = both.split_off(needed_above.min(both.len()));
 	let above_both = both;
@@ -619,7 +618,8 @@ fn parse(
 	opts: &Opts,
 	mut highlights: Vec<(RangeInclusive<usize>, Formatting)>,
 ) -> Source {
-	let (txt, byte_to_char_fixup) = fixup_byte_to_char(txt, opts.tab_width);
+	let (txt, byte_to_char_fixup, decorations) = fixup_byte_to_char(txt, opts.tab_width);
+
 	let mut annotations = annotations.to_vec();
 
 	for (r, _) in highlights.iter_mut() {
@@ -650,19 +650,22 @@ fn parse(
 		.split('\n')
 		.map(|s| s.to_string())
 		.enumerate()
-		.map(|(num, line)| TextLine {
-			line_num: num + 1,
-			line: SegmentBuffer::segment(
-				// Reserve 1 char for the spans pointing to EOL
-				line.chars().chain([' ']).collect::<String>(),
-				Formatting::default(),
-			),
-			annotation: None,
-			prefix: SegmentBuffer::new(),
-			annotations: Vec::new(),
-			bottom_annotations: Vec::new(),
-			top_annotations: Vec::new(),
-			fold: true,
+		.map(|(num, line)| {
+			let chars = line.chars().chain([' ']).collect::<String>();
+			TextLine {
+				line_num: num + 1,
+				line: SegmentBuffer::segment(
+					// Reserve 1 char for the spans pointing to EOL
+					chars,
+					Formatting::default(),
+				),
+				annotation: None,
+				prefix: SegmentBuffer::new(),
+				annotations: Vec::new(),
+				bottom_annotations: Vec::new(),
+				top_annotations: Vec::new(),
+				fold: true,
+			}
 		})
 		.map(Line::Text)
 		.collect();
@@ -684,6 +687,16 @@ fn parse(
 				};
 				text_line.line.apply_meta(start..=end, f);
 			}
+		}
+	}
+
+	for pos in decorations.iter().copied() {
+		let start = offset_to_linecol(pos, &linestarts);
+		let line = &mut lines[start.line];
+		if let Line::Text(text_line) = line {
+			text_line
+				.line
+				.apply_meta(start.column..=start.column, &Formatting::listchar());
 		}
 	}
 
@@ -850,7 +863,7 @@ impl SnippetBuilder {
 		// 	&AddColorToUncolored(u32::from_be_bytes([r, g, b, 0])),
 		// );
 		AnnotationBuilder {
-			location: AnnotationLocation::Any,
+			location: AnnotationLocation::AnyNotInline,
 			snippet: self,
 			priority: 0,
 			formatting,
@@ -875,11 +888,11 @@ impl SnippetBuilder {
 			&self.src,
 			&self.annotations,
 			&Opts {
-				apply_to_orig: true,
+				colored_range_display: true,
 				fold: true,
 				tab_width: 4,
 				context_lines: 2,
-				color_available: false,
+				colorblind_output: false,
 			},
 			self.highlights_before,
 		)
@@ -914,11 +927,14 @@ impl AnnotationBuilder<'_> {
 	}
 	fn location(mut self, location: AnnotationLocation) -> Self {
 		assert!(
-			self.location.is_any(),
+			matches!(self.location, AnnotationLocation::AnyNotInline),
 			"location methods should only be called once"
 		);
 		self.location = location;
 		self
+	}
+	pub fn any_inline(self) -> Self {
+		self.location(AnnotationLocation::Any)
 	}
 	pub fn above(self) -> Self {
 		self.location(AnnotationLocation::Above)
@@ -945,7 +961,6 @@ impl AnnotationBuilder<'_> {
 
 #[cfg(test)]
 mod tests {
-	use itertools::Format;
 	use tree_sitter_highlight::HighlightConfiguration;
 
 	use self::annotation::AnnotationLocation;
@@ -966,12 +981,10 @@ mod tests {
 		snippet
 			.warning(Text::segment("Local name", default()))
 			.range(10..=12)
-			.above()
 			.build();
 		snippet
 			.info(Text::segment("Equals", default()))
 			.range(14..=14)
-			.above()
 			.build();
 		snippet
 			.note(Text::segment("Connected definition", default()))
@@ -1054,11 +1067,11 @@ mod tests {
 				},
 			],
 			&Opts {
-				apply_to_orig: true,
+				colored_range_display: true,
 				fold: true,
 				tab_width: 4,
 				context_lines: 2,
-				color_available: true,
+				colorblind_output: true,
 			},
 			vec![],
 		);
@@ -1086,15 +1099,35 @@ mod tests {
 				},
 			],
 			&Opts {
-				apply_to_orig: false,
+				colored_range_display: true,
 				fold: false,
 				tab_width: 4,
 				context_lines: 2,
-				color_available: true,
+				colorblind_output: true,
 			},
 			vec![],
 		);
 		println!("{}", source_to_ansi(&s))
+	}
+
+	#[test]
+	fn example_multi_range_single_line() {
+		let mut snippet = SnippetBuilder::new("012345678901234567890");
+
+		snippet
+			.error(Text::segment("a", Default::default()))
+			.range(0..=3)
+			.range(10..=13).build();
+		snippet
+			.error(Text::segment("b", Default::default()))
+			.range(2..=2)
+			.range(10..=13).build();
+		snippet
+			.error(Text::segment("c", Default::default()))
+			.range(3..=3)
+			.range(10..=13).build();
+
+		println!("{}", source_to_ansi(&snippet.build()))
 	}
 
 	#[test]

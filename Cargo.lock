@@ -51,6 +51,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
+name = "extension-trait"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd65f1b59dd22d680c7a626cc4a000c1e03d241c51c3e034d2bc9f1e90734f9b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -71,6 +82,7 @@ checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 name = "hi-doc"
 version = "0.2.1"
 dependencies = [
+ "extension-trait",
  "hi-doc-jumprope",
  "itertools",
  "num-traits",
@@ -81,6 +93,7 @@ dependencies = [
  "smallvec",
  "tree-sitter-highlight",
  "tree-sitter-rust",
+ "unicode-box-drawing",
 ]
 
 [[package]]
@@ -372,6 +385,10 @@ dependencies = [
  "cc",
  "tree-sitter-language",
 ]
+
+[[package]]
+name = "unicode-box-drawing"
+version = "0.2.1"
 
 [[package]]
 name = "unicode-ident"

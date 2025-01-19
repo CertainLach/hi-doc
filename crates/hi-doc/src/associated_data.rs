@@ -288,10 +288,8 @@ impl<'a, D> Iterator for AssocIterator<'a, D> {
 #[test]
 fn assoc_smoke() {
 	let mut data = <AssociatedData<char>>::new();
-	dbg!(&data);
 	data.insert(0, AssociatedData::with_size(3, 'a'));
 	data.insert(2, AssociatedData::with_size(1, 'c'));
 	data.insert(0, AssociatedData::with_size(3, 'b'));
 	data.remove(1..3);
-	dbg!(&data.split(1));
 }

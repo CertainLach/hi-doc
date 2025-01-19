@@ -4,3 +4,6 @@ package.license = "MIT"
 resolver = "3"
 
 members = ["crates/*"]
+
+[packages]
+unicode-box-drawing = { path = "./crates/unicode-box-drawing" }

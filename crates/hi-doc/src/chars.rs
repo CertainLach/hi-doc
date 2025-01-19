@@ -1,5 +1,8 @@
 //! Definitions of used formatting characters and how to act when they are overlapped during formatting
 
+use extension_trait::extension_trait;
+use unicode_box_drawing::BoxCharacter;
+
 /// Line connections
 pub(crate) mod line {
 	pub const CONTINUE: char = '─';
@@ -57,134 +60,60 @@ pub(crate) mod line {
 	}
 }
 
-/// Lines from range to annotation text/line connection
-pub mod arrow {
-	pub struct Chars {
-		pub cont: char,
-		pub cont_x: char,
-		pub arrow_rl: char,
-		pub arrow_rl_x: char,
-		pub arrow_rl_x_x: char,
-		pub arrow_l: char,
-		pub arrow_l_x: char,
-		pub arrow_l_x_x: char,
-		pub arrow_r: char,
-		pub arrow_r_x: char,
-		pub arrow_r_x_x: char,
-		pub arrow_cont: char,
-		pub arrow_cont_x: char,
-		pub arrow_cont_x_x: char,
-		pub arrow_inline: char,
+pub enum PreserveStyle {
+	Keep,
+	Replace,
+}
+
+#[extension_trait]
+pub(crate) impl BoxCharacterExt for BoxCharacter {
+	fn cross_vert(self) -> (PreserveStyle, Self) {
+		let v = self.with_top().with_bottom();
+		(
+			if self.top().is_none() || self.bottom().is_none() {
+				PreserveStyle::Replace
+			} else {
+				PreserveStyle::Keep
+			},
+			v,
+		)
 	}
-	pub static BOTTOM: Chars = Chars {
-		cont: '│',
-		cont_x: '┃',
-		arrow_rl: '┴',
-		arrow_rl_x: '╀',
-		arrow_rl_x_x: '╂',
-		arrow_l: '╯',
-		arrow_l_x: '┦',
-		arrow_l_x_x: '┨',
-		arrow_r: '╰',
-		arrow_r_x: '┞',
-		arrow_r_x_x: '┠',
-		arrow_cont: '─',
-		arrow_cont_x: '┼',
-		arrow_cont_x_x: '╂',
-		arrow_inline: '🢒',
-	};
-	pub static TOP: Chars = Chars {
-		arrow_rl: '┬',
-		arrow_rl_x: '╁',
-		arrow_l: '╮',
-		arrow_l_x: '┧',
-		arrow_r: '╭',
-		arrow_r_x: '┟',
-		..BOTTOM
-	};
-
-	pub fn cross(chars: &Chars, char: char) -> Option<(bool, char)> {
-		match char {
-			x if x == chars.cont => Some((true, chars.cont_x)),
-			x if x == chars.cont_x => None,
-
-			x if x == chars.arrow_cont => Some((false, chars.arrow_cont_x)),
-			x if x == chars.arrow_cont_x => Some((true, chars.arrow_cont_x_x)),
-			#[allow(unreachable_patterns)]
-			x if x == chars.arrow_cont_x_x || x == chars.arrow_rl_x_x => None,
-
-			x if x == chars.arrow_r => Some((false, chars.arrow_r_x)),
-			x if x == chars.arrow_r_x => Some((true, chars.arrow_r_x_x)),
-			x if x == chars.arrow_r_x_x => None,
-
-			x if x == chars.arrow_l => Some((false, chars.arrow_l_x)),
-			x if x == chars.arrow_l_x => Some((true, chars.arrow_l_x_x)),
-			x if x == chars.arrow_l_x_x => None,
-
-			x if x == chars.arrow_rl => Some((false, chars.arrow_rl_x)),
-			x if x == chars.arrow_rl_x => Some((true, chars.arrow_rl_x_x)),
-
-			' ' => Some((false, chars.cont)),
-
-			c => unreachable!("{c:?}"),
+	fn mirror_vertical_if(self, cond: bool) -> Self {
+		if cond {
+			self.mirror_vertical()
+		} else {
+			self
 		}
+	}
+	fn left_if(self, cond: bool) -> Self {
+		if cond {
+			self.with_left()
+		} else {
+			self
+		}
+	}
+	fn cross_hor(self) -> (PreserveStyle, Self) {
+		let v = self.with_left().with_right();
+		(
+			if self.left().is_none() || self.right().is_none() {
+				PreserveStyle::Replace
+			} else {
+				PreserveStyle::Keep
+			},
+			v,
+		)
 	}
 }
 
-/// Ranges
-pub(crate) mod single {
-	pub struct Chars {
-		pub cont: char,
-		pub cont_x: char,
-		pub range_start: char,
-		pub range_start_x: char,
-		pub range_cont: char,
-		pub range_cont_x: char,
-		pub range_cont_x_x: char,
-		pub range_end: char,
-		pub range_end_x: char,
-		pub range_end_x_x: char,
-	}
-	pub static BOTTOM: Chars = Chars {
-		cont: '│',
-		cont_x: '┃',
+// fn brc(s: &str, bottom: bool) -> char {
+// 	corner_round(
+// 		BoxData::from_str(s.as_bytes())
+// 			.mirror_vert_if(!bottom)
+// 			.char(),
+// 	)
+// }
 
-		range_start: '├',
-		range_start_x: '┠',
-
-		range_cont: '─',
-		range_cont_x: '┼',
-		range_cont_x_x: '╂',
-
-		range_end: '╯',
-		range_end_x: '┦',
-		range_end_x_x: '┨',
-	};
-	pub static TOP: Chars = Chars {
-		range_end: '╮',
-		range_end_x: '┧',
-		..BOTTOM
-	};
-
-	pub fn cross(chars: &Chars, char: char) -> Option<(bool, char)> {
-		match char {
-			x if x == chars.cont => Some((true, chars.cont_x)),
-			x if x == chars.cont_x => None,
-
-			x if x == chars.range_start => Some((true, chars.range_start_x)),
-			x if x == chars.range_start_x => None,
-
-			x if x == chars.range_cont => Some((false, chars.range_cont_x)),
-			x if x == chars.range_cont_x => Some((true, chars.range_cont_x_x)),
-			x if x == chars.range_cont_x_x => None,
-
-			x if x == chars.range_end => Some((true, chars.range_end_x)),
-			x if x == chars.range_end_x => Some((true, chars.range_end_x_x)),
-			x if x == chars.range_end_x_x => None,
-
-			' ' => Some((false, chars.cont)),
-
-			c => unreachable!("{c:?}"),
-		}
-	}
+pub(crate) fn cross_vertical(c: char) -> Option<(PreserveStyle, BoxCharacter)> {
+	let c = BoxCharacter::decode_char(c)?;
+	Some(c.cross_vert())
 }

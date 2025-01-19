@@ -15,6 +15,8 @@ hi-doc-jumprope = { version = "1.2.0", default-features = false }
 ouroboros = "0.18.3"
 itertools = "0.14.0"
 tree-sitter-highlight = { version = "0.24.7", optional = true }
+unicode-box-drawing = { version = "0.2.1", path = "../unicode-box-drawing" }
+extension-trait = "1.0.2"
 
 [dev-dependencies]
 tree-sitter-rust = "0.23.2"

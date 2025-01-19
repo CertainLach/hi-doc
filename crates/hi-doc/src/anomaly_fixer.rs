@@ -3,6 +3,10 @@ use std::collections::BTreeMap;
 
 use range_map::{Range, RangeSet};
 
+// TODO: I would like to make it configurable like vim's listchars...
+// but I need to check that it has the same display width.
+const TAB_LISTCHAR: char = ' ';
+
 thread_local! {
 	static NONSTANDARD_WIDTH:RangeSet<u32> =vec![
 		(0, 32),
@@ -163,8 +167,12 @@ thread_local! {
 /// Characters, which should be displayed as-is, but whose occupy more that one column, will be kept as is, and offsets will be fixed later
 ///
 /// Returns fixups to convert byte offsets to char offsets using [`apply_fixups`]
-pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap<usize, isize>) {
+pub fn fixup_byte_to_char(
+	mut text: &str,
+	tab_width: usize,
+) -> (String, BTreeMap<usize, isize>, Vec<usize>) {
 	let mut fixups = BTreeMap::new();
+	let mut decorations = Vec::new();
 	let mut out = String::new();
 	let mut fixup = |byte_offset: usize, source_bytes: usize, output_chars: usize| {
 		let entry = fixups.entry(byte_offset).or_default();
@@ -173,6 +181,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 	};
 
 	let mut total_byte_offset = 0;
+	let mut total_char_offset = 0;
 	let mut display_offset_since_newline = 0;
 	loop {
 		let mut current_segment_offset = 0;
@@ -183,6 +192,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 			fixup(total_byte_offset, char_bytes, 1);
 			current_segment_offset += char_bytes;
 			total_byte_offset += char_bytes;
+			total_char_offset += 1;
 			if char == '\n' {
 				display_offset_since_newline = 0;
 			} else {
@@ -207,21 +217,27 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 					display_offset_since_newline += 1;
 					size += 1;
 				}
-				for _ in 0..size {
-					// TODO: First character of tab offset would be better some unicode alternative
-					// However, there isn't one, that is not wide, so... Wide character should be inserted here
-					// with appropriate fixup.
-					out.push(' ');
+				for i in 0..size {
+					if i == 0 {
+						decorations.push(total_char_offset);
+						out.push(TAB_LISTCHAR);
+					} else {
+						out.push(' ');
+					}
 				}
 				text = &text[1..];
 				fixup(total_byte_offset, 1, size);
 				total_byte_offset += 1;
+				total_char_offset += size;
 			}
+			// TODO: Would be cool to display multiple spaces at the start of the line
+			// as tab
 			'\r' if bytes[1] == b'\n' => {
 				out.push('\n');
 				text = &text[2..];
 				fixup(total_byte_offset, 2, 1);
 				total_byte_offset += 2;
+				total_char_offset += 1;
 
 				display_offset_since_newline = 0;
 			}
@@ -231,6 +247,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 				fixup(total_byte_offset, 1, 4);
 				display_offset_since_newline += 4;
 				total_byte_offset += 1;
+				total_char_offset += 4;
 			}
 			'\0' => {
 				out.push_str("<NUL>");
@@ -238,6 +255,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 				fixup(total_byte_offset, 1, 5);
 				display_offset_since_newline += 5;
 				total_byte_offset += 1;
+				total_char_offset += 5;
 			}
 			c => {
 				let str = format!("<U+{:0>4X}>", c as u32);
@@ -251,7 +269,7 @@ pub fn fixup_byte_to_char(mut text: &str, tab_width: usize) -> (String, BTreeMap
 		}
 	}
 
-	(out, fixups)
+	(out, fixups, decorations)
 }
 
 fn is_fullwidth(c: char) -> bool {
@@ -316,7 +334,7 @@ mod replacements {
 
 	#[test]
 	fn cr() {
-		let (out, map) = fixup_byte_to_char("\rhello", 4);
+		let (out, map, _) = fixup_byte_to_char("\rhello", 4);
 		let mut offsets = [0, 1];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "<CR>hello");
@@ -325,16 +343,17 @@ mod replacements {
 
 	#[test]
 	fn tab() {
-		let (out, map) = fixup_byte_to_char("\t\thello", 2);
+		let (out, map, dec) = fixup_byte_to_char("\t\thello", 2);
 		let mut offsets = [0, 1, 2];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "    hello");
 		assert_eq!(offsets, [0, 2, 4]);
+		assert_eq!(dec, [0, 2]);
 	}
 
 	#[test]
 	fn combining() {
-		let (out, map) = fixup_byte_to_char("\u{0610}", 4);
+		let (out, map, _) = fixup_byte_to_char("\u{0610}", 4);
 		let mut offsets = [0, 2];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "<U+0610>");
@@ -343,7 +362,7 @@ mod replacements {
 
 	#[test]
 	fn combining_emoji() {
-		let (out, map) = fixup_byte_to_char("👨‍👨‍👧‍👧", 4);
+		let (out, map, _) = fixup_byte_to_char("👨‍👨‍👧‍👧", 4);
 		let mut offsets = [0, 4, 7, 11, 14];
 		apply_fixups(&mut offsets, &map);
 		assert_eq!(out, "👨<U+200D>👨<U+200D>👧<U+200D>👧");

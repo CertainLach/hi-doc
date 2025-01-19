@@ -9,17 +9,19 @@ pub(crate) struct AnnotationId(pub usize);
 #[derive(Clone)]
 pub struct Opts {
 	/// For primary ranges, instead of creating line with range annotaions,
-	/// apply range colors directly to source string. Only useable with colors
-	pub apply_to_orig: bool,
+	/// apply range colors directly to source string. Only useable with colors, may look ugly
+	/// with applied syntax highlight.
+	pub colored_range_display: bool,
 	/// Allow hiding source lines containing no annotations
 	pub fold: bool,
+	/// Max width of tab in spaces.
 	pub tab_width: usize,
 
 	/// Minimum lines of code above and below annotated line
 	pub context_lines: usize,
 
 	/// Allow formatting which is only recognizable by color.
-	pub color_available: bool,
+	pub colorblind_output: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -35,8 +37,9 @@ pub struct Annotation {
 
 #[derive(Clone, Copy, Default, Debug)]
 pub enum AnnotationLocation {
-	#[default]
 	Any,
+	#[default]
+	AnyNotInline,
 	Above,
 	Below,
 	AboveOrInline,
@@ -50,9 +53,9 @@ impl AnnotationLocation {
 		matches!(self, Self::Any | Self::AboveOrInline | Self::BelowOrInline)
 	}
 	pub fn is_above(&self) -> bool {
-		matches!(self, Self::Any | Self::Above | Self::AboveOrInline)
+		matches!(self, Self::Any | Self::AnyNotInline | Self::Above | Self::AboveOrInline)
 	}
 	pub fn is_below(&self) -> bool {
-		matches!(self, Self::Any | Self::Below | Self::BelowOrInline)
+		matches!(self, Self::Any | Self::AnyNotInline | Self::Below | Self::BelowOrInline)
 	}
 }

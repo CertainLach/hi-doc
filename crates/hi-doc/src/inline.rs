@@ -117,7 +117,11 @@ pub(crate) fn group_singleline(annotations: &[LineAnnotation]) -> SingleLine {
 				formatting: most.formatting.clone(),
 			});
 			annotation = Some(most.id);
-			right = Some((most.formatting.clone(), most.right.clone()));
+			if most.right.is_empty() {
+				right = None
+			} else {
+				right = Some((most.formatting.clone(), most.right.clone()));
+			}
 		}
 	}
 
@@ -158,7 +162,7 @@ pub(crate) fn apply_inline_annotations(
 	if let Some((formatting, right)) = right {
 		text.extend([
 			Text::segment(
-				format!("{} ", crate::chars::arrow::BOTTOM.arrow_inline),
+				format!("{} ", '🢒'),
 				formatting,
 			),
 			right,
