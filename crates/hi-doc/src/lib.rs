@@ -18,10 +18,14 @@ use random_color::{
 use range_map::{Range, RangeSet};
 use segment::SegmentBuffer;
 use single_line::LineAnnotation;
+use unicode_box_drawing::bc;
 
 pub use crate::formatting::Formatting;
 
-use self::annotation::AnnotationLocation;
+use self::{
+	annotation::AnnotationLocation,
+	chars::{cross_horizontal, PreserveStyle},
+};
 
 mod annotation;
 mod anomaly_fixer;
@@ -365,18 +369,18 @@ fn draw_line_connections(
 					let offset = max_index - 2;
 
 					for line in range.start..=range.end {
-						use chars::line::*;
 						let char = if range.start == range.end {
-							RANGE_EMPTY
+							bc!(r)
 						} else if line == range.start {
-							RANGE_START
+							bc!(rb)
 						} else if line == range.end {
-							RANGE_END
+							bc!(tr)
 						} else if conn.connected.contains(&line) {
-							RANGE_CONNECTION
+							bc!(trb)
 						} else {
-							RANGE_CONTINUE
-						};
+							bc!(tb)
+						}
+						.char_round();
 						let text = lines[line].text_mut().expect("only with text reachable");
 						if text.len() <= offset {
 							text.resize(offset + 1, ' ', annotation_fmt.clone());
@@ -397,15 +401,14 @@ fn draw_line_connections(
 								{
 									break;
 								}
-								if let Some((keep_style, replacement)) = cross(char) {
+								if let Some((keep_style, replacement)) = cross_horizontal(char) {
 									text.splice(
 										i..=i,
 										Some(SegmentBuffer::segment(
 											replacement.to_string(),
-											if keep_style {
-												fmt.clone()
-											} else {
-												annotation_fmt.clone()
+											match keep_style {
+												PreserveStyle::Keep => fmt.clone(),
+												PreserveStyle::Replace => annotation_fmt.clone(),
 											},
 										)),
 									)
@@ -1117,15 +1120,18 @@ mod tests {
 		snippet
 			.error(Text::segment("a", Default::default()))
 			.range(0..=3)
-			.range(10..=13).build();
+			.range(10..=13)
+			.build();
 		snippet
 			.error(Text::segment("b", Default::default()))
 			.range(2..=2)
-			.range(10..=13).build();
+			.range(10..=13)
+			.build();
 		snippet
 			.error(Text::segment("c", Default::default()))
 			.range(3..=3)
-			.range(10..=13).build();
+			.range(10..=13)
+			.build();
 
 		println!("{}", source_to_ansi(&snippet.build()))
 	}
