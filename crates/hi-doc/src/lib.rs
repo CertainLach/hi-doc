@@ -1173,6 +1173,7 @@ mod tests {
 		snippet.highlight(config, |name, _code| {
 			if name == 1 {
 				Formatting::rgb([255, 50, 50])
+					.url("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string())
 			} else if name == 2 {
 				Formatting::rgb([50, 150, 50])
 			} else {
