@@ -62,6 +62,53 @@ fn unround_corner(c: char) -> char {
 	}
 }
 
+const LINES_NORMAL: [char; 4] = ['│', '┃', '─', '━'];
+const LINES_DOT_W2: [char; 4] = ['╎', '╏', '╌', '╍'];
+const LINES_DOT_W3: [char; 4] = ['┆', '┇', '┄', '┅'];
+const LINES_DOT_W4: [char; 4] = ['┊', '┋', '┈', '┉'];
+const fn index_of_4(v: &[char; 4], c: char) -> Option<usize> {
+	let mut i = 0;
+	while i < 4 {
+		if v[i] == c {
+			return Some(i);
+		}
+		i += 1;
+	}
+	None
+}
+const fn line_dotted_w2(c: char) -> char {
+	if let Some(v) = index_of_4(&LINES_NORMAL, c) {
+		LINES_DOT_W2[v]
+	} else {
+		c
+	}
+}
+const fn line_dotted_w3(c: char) -> char {
+	if let Some(v) = index_of_4(&LINES_NORMAL, c) {
+		LINES_DOT_W3[v]
+	} else {
+		c
+	}
+}
+const fn line_dotted_w4(c: char) -> char {
+	if let Some(v) = index_of_4(&LINES_NORMAL, c) {
+		LINES_DOT_W4[v]
+	} else {
+		c
+	}
+}
+const fn line_undotted(c: char) -> char {
+	if let Some(v) = index_of_4(&LINES_DOT_W2, c) {
+		LINES_NORMAL[v]
+	} else if let Some(v) = index_of_4(&LINES_DOT_W3, c) {
+		LINES_NORMAL[v]
+	} else if let Some(v) = index_of_4(&LINES_DOT_W4, c) {
+		LINES_NORMAL[v]
+	} else {
+		c
+	}
+}
+
 const fn div_rem(a: u8, b: u8) -> (u8, u8) {
 	(a / b, a % b)
 }
@@ -126,6 +173,27 @@ impl fmt::Display for BoxCharacter {
 }
 
 impl BoxCharacter {
+	pub fn is_vertical_bar(self) -> bool {
+		!self.top().is_none()
+			&& !self.bottom().is_none()
+			&& self.left().is_none()
+			&& self.right().is_none()
+	}
+	pub fn is_horizontal_bar(self) -> bool {
+		self.rotate_clockwise().is_vertical_bar()
+	}
+	pub fn is_bar(self) -> bool {
+		self.is_vertical_bar() || self.is_horizontal_bar()
+	}
+	pub fn rotate_clockwise(self) -> Self {
+		let r = self.raw();
+		Self::from_raw(Raw {
+			right: r.top,
+			bottom: r.right,
+			left: r.bottom,
+			top: r.left,
+		})
+	}
 	pub fn top(self) -> Width {
 		self.raw().top
 	}
@@ -214,11 +282,20 @@ impl BoxCharacter {
 	pub const fn char_round(&self) -> char {
 		corner_round(self.char())
 	}
+	pub const fn char_dotted_w2(&self) -> char {
+		line_dotted_w2(self.char())
+	}
+	pub const fn char_dotted_w3(&self) -> char {
+		line_dotted_w3(self.char())
+	}
+	pub const fn char_dotted_w4(&self) -> char {
+		line_dotted_w4(self.char())
+	}
 	pub fn decode_char(v: char) -> Option<Self> {
 		if v == ' ' {
 			return Some(Self(0));
 		};
-		let v = unround_corner(v);
+		let v = line_undotted(unround_corner(v));
 		let id = BOX_CHARS_STR.find(v)? / 3;
 		Some(Self::from_raw(
 			Raw::decode(id as u8 + 1).expect("valid idx"),
@@ -290,5 +367,26 @@ mod tests {
 	fn smoke() {
 		let c = bc!(ttrb);
 		assert_eq!(c.char(), '┞')
+	}
+
+	#[test]
+	fn round_corners() {
+		let c = bc!(tr);
+		assert_eq!(c.char_round(), '╰')
+	}
+
+	#[test]
+	fn dotted() {
+		let c = bc!(tb);
+		assert_eq!(c.char_dotted_w3(), '┆')
+	}
+
+	#[test]
+	fn is_bar() {
+		assert!(bc!(tb).is_vertical_bar());
+		assert!(!bc!(tb).is_horizontal_bar());
+		assert!(bc!(rl).is_horizontal_bar());
+		assert!(!bc!(rl).is_vertical_bar());
+		assert!(!bc!(tr).is_bar())
 	}
 }
