@@ -20,6 +20,7 @@
       systems = inputs.nixpkgs.lib.systems.flakeExposed;
       perSystem = {
         self',
+        inputs',
         system,
         pkgs,
         lib,
@@ -37,9 +38,7 @@
           packages = with pkgs; [
             rust
             cargo-edit
-            asciinema
-
-              cmake
+            cmake
           ];
           environment.NIX_FMT = lib.getExe self'.formatter;
         };

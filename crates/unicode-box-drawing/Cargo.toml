@@ -1,7 +1,9 @@
 [package]
 name = "unicode-box-drawing"
+description = "Unicode box-drawing characters"
 edition = "2021"
 version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]

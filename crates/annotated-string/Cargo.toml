@@ -1,8 +1,10 @@
 [package]
 name = "annotated-string"
+description = "String with ability to annotate (format) its individual fragments"
 edition = "2021"
 version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 hi-doc-jumprope = { workspace = true, optional = true }

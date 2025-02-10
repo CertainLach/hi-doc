@@ -1,6 +1,6 @@
 # hi-doc
 
-![annotated code example](./fixtures/example.png)
+![annotated code example](./fixtures/readme.png)
 
 Diagnostic formatting library.
 

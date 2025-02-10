@@ -1,6 +1,7 @@
 [workspace]
 package.version = "0.2.1"
 package.license = "MIT"
+package.repository = "https://github.com/CertainLach/hi-doc"
 resolver = "3"
 
 members = ["crates/*"]
@@ -9,5 +10,5 @@ members = ["crates/*"]
 unicode-box-drawing = { path = "./crates/unicode-box-drawing" }
 ouroboros = "0.18.3"
 itertools = "0.14.0"
-hi-doc-jumprope = { version = "1.2.0", default-features = false }
+hi-doc-jumprope = { version = "1.2.0" }
 annotated-string = { path = "./crates/annotated-string" }

@@ -72,6 +72,12 @@ fn bounds_to_exclusive(bounds: impl RangeBounds<usize>, len: usize) -> Range<usi
 	start..end
 }
 
+impl<M: Clone + Default> AnnotatedRope<M> {
+	pub fn default_fragment(v: impl AsRef<str>) -> Self {
+		Self::fragment(v, M::default())
+	}
+}
+
 impl<M: Clone> AnnotatedRope<M> {
 	pub fn new() -> Self {
 		Self {

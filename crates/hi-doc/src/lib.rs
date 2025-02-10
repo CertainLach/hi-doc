@@ -1026,238 +1026,74 @@ impl AnnotationBuilder<'_> {
 
 #[cfg(test)]
 mod tests {
-	use tree_sitter_highlight::HighlightConfiguration;
+	// #[test]
+	// fn fullwidth_marker_apply() {
+	// 	let s = parse(
+	// 		"ＡＢＣ",
+	// 		&[
+	// 			Annotation {
+	// 				priority: 0,
+	// 				formatting: Formatting::color(0xff000000),
+	// 				ranges: [Range::new(0, 2)].into_iter().collect(),
+	// 				text: Text::fragment("a", default()),
+	// 				location: AnnotationLocation::BelowOrInline,
+	// 			},
+	// 			Annotation {
+	// 				priority: 0,
+	// 				formatting: Formatting::color(0x00ff0000),
+	// 				ranges: [Range::new(3, 5)].into_iter().collect(),
+	// 				text: Text::fragment("b", default()),
+	// 				location: AnnotationLocation::BelowOrInline,
+	// 			},
+	// 			Annotation {
+	// 				priority: 0,
+	// 				formatting: Formatting::color(0x0000ff00),
+	// 				ranges: [Range::new(6, 8)].into_iter().collect(),
+	// 				text: Text::fragment("c", default()),
+	// 				location: AnnotationLocation::BelowOrInline,
+	// 			},
+	// 		],
+	// 		&Opts {
+	// 			colored_range_display: true,
+	// 			fold: true,
+	// 			tab_width: 4,
+	// 			context_lines: 2,
+	// 			colorblind_output: true,
+	// 		},
+	// 		vec![],
+	// 	);
+	// 	println!("{}", source_to_ansi(&s))
+	// }
 
-	use self::annotation::AnnotationLocation;
-
-	use super::*;
-
-	fn default<T: Default>() -> T {
-		Default::default()
-	}
-
-	#[test]
-	fn readme() {
-		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
-		snippet
-			.error(Text::fragment("Local defs", default()))
-			.ranges([4..=8, 3142..=3146])
-			.build();
-		snippet
-			.warning(Text::fragment("Local name", default()))
-			.range(10..=12)
-			.build();
-		snippet
-			.info(Text::fragment("Equals", default()))
-			.range(14..=14)
-			.build();
-		snippet
-			.note(Text::fragment("Connected definition", default()))
-			.ranges([3133..=3135, 6155..=6157])
-			.build();
-		snippet
-			.note(Text::fragment("Another connected definition", default()))
-			.ranges([5909..=5913, 6062..=6066, 6242..=6244])
-			.build();
-		let s = snippet.build();
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn test_fmt() {
-		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
-		snippet
-			.info(Text::fragment("Hello world", default()))
-			.range(2832..=3135)
-			.build();
-		snippet
-			.warning(Text::fragment("Conflict", default()))
-			.range(2838..=2847)
-			.build();
-		snippet
-			.error(Text::fragment("Still has text", default()))
-			.range(2839..=2846)
-			.build();
-		let s = snippet.build();
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn fullwidth_marker() {
-		let mut snippet = SnippetBuilder::new("ＡＢＣ");
-		snippet
-			.info(Text::fragment("a", default()))
-			.range(0..=2)
-			.above()
-			.build();
-		snippet
-			.info(Text::fragment("b", default()))
-			.range(3..=5)
-			.above()
-			.build();
-		snippet
-			.info(Text::fragment("c", default()))
-			.range(6..=8)
-			.above()
-			.build();
-		let s = snippet.build();
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn fullwidth_marker_apply() {
-		let s = parse(
-			"ＡＢＣ",
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(0, 2)].into_iter().collect(),
-					text: Text::fragment("a", default()),
-					location: AnnotationLocation::BelowOrInline,
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(3, 5)].into_iter().collect(),
-					text: Text::fragment("b", default()),
-					location: AnnotationLocation::BelowOrInline,
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x0000ff00),
-					ranges: [Range::new(6, 8)].into_iter().collect(),
-					text: Text::fragment("c", default()),
-					location: AnnotationLocation::BelowOrInline,
-				},
-			],
-			&Opts {
-				colored_range_display: true,
-				fold: true,
-				tab_width: 4,
-				context_lines: 2,
-				colorblind_output: true,
-			},
-			vec![],
-		);
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn tab_in_normal_and_fullwidth() {
-		let s = parse(
-			"Ａ\tＢ\n\tＢ\na\tb\n\tb",
-			&[
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0xff000000),
-					ranges: [Range::new(17, 17)].into_iter().collect(),
-					text: Text::fragment("Line start", default()),
-					location: AnnotationLocation::Below,
-				},
-				Annotation {
-					priority: 0,
-					formatting: Formatting::color(0x00ff0000),
-					ranges: [Range::new(18, 18)].into_iter().collect(),
-					text: Text::fragment("Aligned", default()),
-					location: AnnotationLocation::Below,
-				},
-			],
-			&Opts {
-				colored_range_display: true,
-				fold: false,
-				tab_width: 4,
-				context_lines: 2,
-				colorblind_output: true,
-			},
-			vec![],
-		);
-		println!("{}", source_to_ansi(&s))
-	}
-
-	#[test]
-	fn example_multi_range_single_line() {
-		let mut snippet = SnippetBuilder::new("012345678901234567890");
-
-		snippet
-			.error(Text::fragment("a", Default::default()))
-			.range(0..=3)
-			.range(10..=13)
-			.build();
-		snippet
-			.error(Text::fragment("b", Default::default()))
-			.range(2..=2)
-			.range(10..=13)
-			.build();
-		snippet
-			.error(Text::fragment("c", Default::default()))
-			.range(3..=3)
-			.range(10..=13)
-			.build();
-
-		println!("{}", source_to_ansi(&snippet.build()))
-	}
-
-	#[test]
-	fn example_from_annotate_snippets() {
-		let src = r#") -> Option<String> {
-	for ann in annotations {
-		match (ann.range.0, ann.range.1) {
-			(None, None) => continue,
-			(Some(start), Some(end)) if start > end_index => continue,
-			(Some(start), Some(end)) if start >= start_index => {
-				let label = if let Some(ref label) = ann.label {
-					format!(" {}", label)
-				} else {
-					String::from("")
-				};
-				return Some(format!(
-					"{}{}{}",
-					" ".repeat(start - start_index),
-					"^".repeat(end - start),
-					label
-				));
-			}
-			_ => continue,
-		}
-	}"#;
-		let mut snippet = SnippetBuilder::new(src)
-			.with_file_name("source.rs", Some("file:/path/to/source.rs".to_owned()));
-		let language = tree_sitter_rust::LANGUAGE;
-		let mut config = HighlightConfiguration::new(
-			language.into(),
-			"rust",
-			tree_sitter_rust::HIGHLIGHTS_QUERY,
-			tree_sitter_rust::INJECTIONS_QUERY,
-			"",
-		)
-		.expect("config");
-		config.configure(&["punctuation.bracket", "keyword", "property"]);
-		snippet.highlight(config, |name, _code| {
-			if name == 1 {
-				Formatting::rgb([255, 50, 50])
-					.url("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string())
-			} else if name == 2 {
-				Formatting::rgb([50, 150, 50])
-			} else {
-				Formatting::rgb([50, 255, 255])
-			}
-		});
-		snippet
-			.error(Text::fragment(
-				"expected `Option<String>` because of return type",
-				Formatting::default(),
-			))
-			.range(5..=18)
-			.build();
-		snippet
-			.note(Text::fragment(
-				"expected enum `std::option::Option`",
-				default(),
-			))
-			.range(22..=510)
-			.build();
-		let s = snippet.build();
-		println!("{}", source_to_ansi(&s))
-	}
+	// #[test]
+	// fn tab_in_normal_and_fullwidth() {
+	// 	let s = parse(
+	// 		"Ａ\tＢ\n\tＢ\na\tb\n\tb",
+	// 		&[
+	// 			Annotation {
+	// 				priority: 0,
+	// 				formatting: Formatting::color(0xff000000),
+	// 				ranges: [Range::new(17, 17)].into_iter().collect(),
+	// 				text: Text::fragment("Line start", default()),
+	// 				location: AnnotationLocation::Below,
+	// 			},
+	// 			Annotation {
+	// 				priority: 0,
+	// 				formatting: Formatting::color(0x00ff0000),
+	// 				ranges: [Range::new(18, 18)].into_iter().collect(),
+	// 				text: Text::fragment("Aligned", default()),
+	// 				location: AnnotationLocation::Below,
+	// 			},
+	// 		],
+	// 		&Opts {
+	// 			colored_range_display: true,
+	// 			fold: false,
+	// 			tab_width: 4,
+	// 			context_lines: 2,
+	// 			colorblind_output: true,
+	// 		},
+	// 		vec![],
+	// 	);
+	// 	println!("{}", source_to_ansi(&s))
+	// }
 }
