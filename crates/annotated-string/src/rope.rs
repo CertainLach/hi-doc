@@ -7,7 +7,7 @@ use std::{
 };
 
 use hi_doc_jumprope::{
-	iter::{Chars, ContentIter, SliceIter, Substrings},
+	iter::{Chars as RopeChars, ContentIter, SliceIter, Substrings},
 	JumpRope, JumpRopeBuf,
 };
 
@@ -16,7 +16,7 @@ use crate::{AnnotatedRange, ApplyAnnotation};
 #[derive(Clone, Debug)]
 pub struct AnnotatedRope<M> {
 	rope: JumpRopeBuf,
-	meta: AnnotatedRange<M>,
+	annotations: AnnotatedRange<M>,
 }
 
 #[ouroboros::self_referencing]
@@ -44,13 +44,13 @@ impl<'f> Iterator for Fragments<'f> {
 	}
 }
 #[ouroboros::self_referencing]
-pub struct JumpRopeBufCharIter<'r> {
+pub struct Chars<'r> {
 	rope_buf: cell::Ref<'r, JumpRope>,
 	#[borrows(rope_buf)]
 	#[covariant]
-	iter: Chars<'this, ContentIter<'this>>,
+	iter: RopeChars<'this, ContentIter<'this>>,
 }
-impl Iterator for JumpRopeBufCharIter<'_> {
+impl Iterator for Chars<'_> {
 	type Item = char;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -72,11 +72,11 @@ fn bounds_to_exclusive(bounds: impl RangeBounds<usize>, len: usize) -> Range<usi
 	start..end
 }
 
-impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
+impl<M: Clone> AnnotatedRope<M> {
 	pub fn new() -> Self {
 		Self {
 			rope: JumpRopeBuf::new(),
-			meta: AnnotatedRange::new(),
+			annotations: AnnotatedRange::new(),
 		}
 	}
 	pub fn fragment(v: impl AsRef<str>, meta: M) -> Self {
@@ -86,7 +86,7 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 			Self::new()
 		} else {
 			Self {
-				meta: AnnotatedRange::with_size(rope.len_chars(), meta),
+				annotations: AnnotatedRange::with_size(rope.len_chars(), meta),
 				rope,
 			}
 		}
@@ -98,7 +98,7 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 			Self::new()
 		} else {
 			Self {
-				meta: AnnotatedRange::with_size(rope.len_chars(), meta),
+				annotations: AnnotatedRange::with_size(rope.len_chars(), meta),
 				rope,
 			}
 		}
@@ -114,12 +114,12 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 			self.rope.insert(offset, str);
 			offset += len;
 		}
-		self.meta.insert(position, buf.meta);
+		self.annotations.insert(position, buf.annotations);
 	}
 	pub fn remove(&mut self, range: impl RangeBounds<usize>) {
 		let range = bounds_to_exclusive(range, self.len());
 		self.rope.remove(range.clone());
-		self.meta.remove(range);
+		self.annotations.remove(range);
 	}
 	pub fn splice(&mut self, range: impl RangeBounds<usize>, value: Option<Self>) {
 		let range = bounds_to_exclusive(range, self.len());
@@ -131,14 +131,14 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 	}
 	pub fn extend(&mut self, buf: impl IntoIterator<Item = Self>) {
 		for buf in buf {
-			self.insert(self.meta.len(), buf)
+			self.insert(self.annotations.len(), buf)
 		}
 	}
 	pub fn append(&mut self, buf: Self) {
 		self.extend([buf]);
 	}
 	pub fn fragments(&self) -> impl IntoIterator<Item = (Fragments<'_>, &'_ M)> {
-		self.meta.iter().map(|v| {
+		self.annotations.iter().map(|v| {
 			(
 				Fragments::new(self.rope.borrow(), |r| r.slice_substrings(v.1)),
 				v.0,
@@ -157,11 +157,11 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 			.borrow()
 			.slice_chars(pos..pos + 1)
 			.next()
-			.map(|v| (v, self.meta.get(pos).expect("meta is broken?")))
+			.map(|v| (v, self.annotations.get(pos).expect("meta is broken?")))
 	}
 
-	pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
-		JumpRopeBufCharIter::new(self.rope.borrow(), |v| v.chars())
+	pub fn chars(&self) -> Chars<'_> {
+		Chars::new(self.rope.borrow(), |v| v.chars())
 	}
 	pub fn resize(&mut self, size: usize, char: char, meta: M) {
 		match size.cmp(&self.len()) {
@@ -180,16 +180,16 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 		let mut right = rope;
 		right.remove(0..pos);
 
-		let meta = self.meta.clone();
+		let meta = self.annotations.clone();
 		let (meta_left, meta_right) = meta.split(pos);
 		(
 			AnnotatedRope {
 				rope: left.into(),
-				meta: meta_left,
+				annotations: meta_left,
 			},
 			AnnotatedRope {
 				rope: right.into(),
-				meta: meta_right,
+				annotations: meta_right,
 			},
 		)
 	}
@@ -208,6 +208,7 @@ impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 		out
 	}
 }
+impl<M> AnnotatedRope<M> {}
 
 impl<M: Clone + fmt::Debug> Default for AnnotatedRope<M> {
 	fn default() -> Self {
@@ -215,11 +216,19 @@ impl<M: Clone + fmt::Debug> Default for AnnotatedRope<M> {
 	}
 }
 impl<M: Clone + PartialEq + fmt::Debug> AnnotatedRope<M> {
-	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize>, value: &T)
+	pub fn annotate_range<T>(&mut self, range: impl RangeBounds<usize>, value: &T)
 	where
 		M: ApplyAnnotation<T>,
 	{
-		self.meta
+		self.annotations
 			.apply_meta(bounds_to_exclusive(range, self.len()), value)
+	}
+}
+
+impl<M: Clone> FromIterator<AnnotatedRope<M>> for AnnotatedRope<M> {
+	fn from_iter<T: IntoIterator<Item = AnnotatedRope<M>>>(iter: T) -> Self {
+		let mut rope = AnnotatedRope::new();
+		rope.extend(iter);
+		rope
 	}
 }

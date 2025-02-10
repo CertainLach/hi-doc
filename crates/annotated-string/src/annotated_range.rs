@@ -1,9 +1,9 @@
+use itertools::Itertools;
 use std::cell::Cell;
 use std::collections::{btree_map, BTreeMap};
 use std::fmt;
 use std::iter::Peekable;
 use std::ops::Range;
-use itertools::Itertools;
 
 use crate::ApplyAnnotation;
 
@@ -37,15 +37,20 @@ pub struct AnnotatedRange<D> {
 	data: BTreeMap<MutableOffset, D>,
 	len: usize,
 }
+impl<D> Default for AnnotatedRange<D> {
+	fn default() -> Self {
+		Self {
+			data: Default::default(),
+			len: Default::default(),
+		}
+	}
+}
 fn assert_none<T>(v: Option<T>) {
 	debug_assert!(v.is_none());
 }
-impl<D: Clone + fmt::Debug> AnnotatedRange<D> {
+impl<D: Clone> AnnotatedRange<D> {
 	pub fn new() -> Self {
-		Self {
-			data: BTreeMap::new(),
-			len: 0,
-		}
+		Self::default()
 	}
 	pub fn with_size(size: usize, data: D) -> Self {
 		if size == 0 {
@@ -199,8 +204,8 @@ impl<D: Clone + fmt::Debug> AnnotatedRange<D> {
 	pub fn len(&self) -> usize {
 		self.len
 	}
-	pub fn iter(&self) -> AssocIterator<'_, D> {
-		AssocIterator {
+	pub fn iter(&self) -> Annotations<'_, D> {
+		Annotations {
 			inner: self.data.iter().peekable(),
 			total_size: self.len,
 		}
@@ -263,11 +268,11 @@ impl<D: Clone + PartialEq + fmt::Debug> AnnotatedRange<D> {
 		self.merge_hint(range.end);
 	}
 }
-pub struct AssocIterator<'a, D> {
+pub struct Annotations<'a, D> {
 	inner: Peekable<btree_map::Iter<'a, MutableOffset, D>>,
 	total_size: usize,
 }
-impl<'a, D> Iterator for AssocIterator<'a, D> {
+impl<'a, D> Iterator for Annotations<'a, D> {
 	type Item = (&'a D, Range<usize>);
 
 	fn next(&mut self) -> Option<Self::Item> {

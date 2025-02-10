@@ -46,6 +46,7 @@ pub enum AnnotationLocation {
 	BelowOrInline,
 }
 impl AnnotationLocation {
+	#[expect(dead_code)]
 	pub fn is_any(&self) -> bool {
 		matches!(self, Self::Any)
 	}

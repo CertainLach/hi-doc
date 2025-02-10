@@ -66,7 +66,13 @@ impl Formatting {
 	}
 	pub fn border() -> Self {
 		Self {
-			color: Some(0xffffff00),
+			color: Some(0x92929200),
+			..Default::default()
+		}
+	}
+	pub fn filename() -> Self {
+		Self {
+			color: Some(0x6868a900),
 			..Default::default()
 		}
 	}

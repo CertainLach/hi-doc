@@ -156,7 +156,7 @@ pub(crate) fn apply_inline_annotations(
 ) {
 	for annotation in annotations {
 		for range in annotation.ranges.ranges() {
-			text.apply_meta(range.start..=range.end, &annotation.formatting)
+			text.annotate_range(range.start..=range.end, &annotation.formatting)
 		}
 	}
 	if let Some((formatting, right)) = right {

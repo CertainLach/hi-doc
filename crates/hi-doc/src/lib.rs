@@ -21,7 +21,7 @@ pub use crate::formatting::Formatting;
 
 use self::{
 	annotation::AnnotationLocation,
-	chars::{cross_horizontal, PreserveStyle},
+	chars::{cross_horizontal, BoxCharacterExt, PreserveStyle},
 };
 
 mod annotation;
@@ -48,6 +48,13 @@ struct AnnotationLine {
 struct GapLine {
 	prefix: Text,
 	line: Text,
+}
+
+#[derive(Debug)]
+struct BorderLine {
+	prefix: Text,
+	line: Text,
+	top_border: bool,
 }
 
 #[derive(Debug)]
@@ -111,6 +118,7 @@ enum Line {
 	Raw(RawLine),
 	Nop,
 	Gap(GapLine),
+	Border(BorderLine),
 }
 impl Line {
 	fn text_mut(&mut self) -> Option<&mut Text> {
@@ -118,6 +126,7 @@ impl Line {
 			Line::Text(t) => &mut t.line,
 			Line::Gap(t) => &mut t.line,
 			Line::Annotation(t) => &mut t.line,
+			Line::Border(t) => &mut t.line,
 			_ => return None,
 		})
 	}
@@ -126,6 +135,9 @@ impl Line {
 	}
 	fn is_annotation(&self) -> bool {
 		matches!(self, Self::Annotation(_))
+	}
+	fn is_border(&self) -> bool {
+		matches!(self, Self::Border(_))
 	}
 	fn as_annotation(&self) -> Option<&AnnotationLine> {
 		match self {
@@ -169,11 +181,6 @@ impl Line {
 #[derive(Debug)]
 pub struct Source {
 	lines: Vec<Line>,
-}
-impl Source {
-	fn wrap_border(mut self) -> Self {
-		self
-	}
 }
 
 fn cleanup_nops(source: &mut Source) {
@@ -242,7 +249,7 @@ fn fold(source: &mut Source, opts: &Opts) {
 
 fn draw_line_numbers(source: &mut Source) {
 	for lines in &mut cons_slices(&mut source.lines, |l| {
-		l.is_annotation() || l.is_text() || l.is_gap()
+		l.is_annotation() || l.is_text() || l.is_gap() || l.is_border()
 	}) {
 		let max_num = lines
 			.iter()
@@ -257,17 +264,35 @@ fn draw_line_numbers(source: &mut Source) {
 			AnnotatedRope::fragment(" ".repeat(max_len - 1), Formatting::line_number());
 		for line in lines.iter_mut() {
 			match line {
-				Line::Text(t) => t.prefix.extend([SegmentBuffer::segment(
-					format!("{:>width$} ", t.line_num, width = max_len),
-					Formatting::line_number(),
-				)]),
+				Line::Text(t) => t.prefix.extend([
+					AnnotatedRope::fragment(
+						format!("{:>width$}  ", t.line_num, width = max_len),
+						Formatting::line_number(),
+					),
+					AnnotatedRope::fragment("│ ", Formatting::border()),
+				]),
 				Line::Annotation(a) => a.prefix.extend([
 					prefix_segment.clone(),
-					SegmentBuffer::segment("· ", Formatting::line_number()),
+					AnnotatedRope::fragment("   · ", Formatting::border()),
+				]),
+				Line::Border(a) => a.prefix.extend([
+					prefix_segment.clone(),
+					AnnotatedRope::fragment(
+						format!(
+							"   {}{}{}",
+							bc!(tr).mirror_vertical_if(a.top_border).char_round(),
+							bc!(rl),
+							bc!(rl),
+						),
+						Formatting::border(),
+					),
 				]),
 				Line::Gap(a) => a.prefix.extend([
 					prefix_segment.clone(),
-					SegmentBuffer::segment("⋮ ", Formatting::line_number()),
+					AnnotatedRope::fragment(
+						format!("   {} ", bc!(tb).char_dotted_w4()),
+						Formatting::border(),
+					),
 				]),
 				_ => unreachable!(),
 			}
@@ -346,7 +371,7 @@ fn draw_line_connections(
 					}
 				}
 				while max_index < 2 {
-					let seg = Some(SegmentBuffer::segment(
+					let seg = Some(AnnotatedRope::fragment(
 						" ".repeat(2 - max_index),
 						annotation_fmt.clone(),
 					));
@@ -382,7 +407,7 @@ fn draw_line_connections(
 						}
 						text.splice(
 							offset..offset + 1,
-							Some(SegmentBuffer::segment(
+							Some(AnnotatedRope::fragment(
 								char.to_string(),
 								annotation_fmt.clone(),
 							)),
@@ -399,7 +424,7 @@ fn draw_line_connections(
 								if let Some((keep_style, replacement)) = cross_horizontal(char) {
 									text.splice(
 										i..=i,
-										Some(SegmentBuffer::segment(
+										Some(AnnotatedRope::fragment(
 											replacement.to_string(),
 											match keep_style {
 												PreserveStyle::Keep => fmt.clone(),
@@ -551,34 +576,36 @@ fn process(
 	// Connect annotation lines
 	draw_line_connections(source, annotation_formats);
 
-	{}
-	// Apply line numbers
-	draw_line_numbers(source);
+	cleanup(source);
+}
 
+fn to_raw(source: &mut Source) {
 	// To raw
-	{
-		for line in &mut source.lines {
-			match line {
-				Line::Text(t) => {
-					let mut buf = AnnotatedRope::new();
-					buf.extend([t.prefix.clone(), t.line.clone()]);
-					*line = Line::Raw(RawLine { data: buf });
-				}
-				Line::Annotation(t) => {
-					let mut buf = AnnotatedRope::new();
-					buf.extend([t.prefix.clone(), t.line.clone()]);
-					*line = Line::Raw(RawLine { data: buf })
-				}
-				Line::Gap(t) => {
-					let mut buf = SegmentBuffer::new();
-					buf.extend([t.prefix.clone(), t.line.clone()]);
-					*line = Line::Raw(RawLine { data: buf })
-				}
-				Line::Raw(_) | Line::Nop => {}
+	for line in &mut source.lines {
+		match line {
+			Line::Text(t) => {
+				let mut buf = AnnotatedRope::new();
+				buf.extend([t.prefix.clone(), t.line.clone()]);
+				*line = Line::Raw(RawLine { data: buf });
 			}
+			Line::Annotation(t) => {
+				let mut buf = AnnotatedRope::new();
+				buf.extend([t.prefix.clone(), t.line.clone()]);
+				*line = Line::Raw(RawLine { data: buf })
+			}
+			Line::Gap(t) => {
+				let mut buf = AnnotatedRope::new();
+				buf.extend([t.prefix.clone(), t.line.clone()]);
+				*line = Line::Raw(RawLine { data: buf })
+			}
+			Line::Border(t) => {
+				let mut buf = AnnotatedRope::new();
+				buf.extend([t.prefix.clone(), t.line.clone()]);
+				*line = Line::Raw(RawLine { data: buf })
+			}
+			Line::Raw(_) | Line::Nop => {}
 		}
 	}
-	cleanup(source);
 }
 
 fn linestarts(str: &str) -> BTreeSet<usize> {
@@ -674,8 +701,8 @@ fn parse(
 		let start = offset_to_linecol(start, &linestarts);
 		let end = offset_to_linecol(end, &linestarts);
 
-		for i in start.line..=end.line {
-			let line = &mut lines[i];
+		for (relative_linenumber, line) in lines[start.line..=end.line].iter_mut().enumerate() {
+			let i = relative_linenumber + start.line;
 			if let Line::Text(text_line) = line {
 				let start = if i == start.line { start.column } else { 0 };
 				let end = if i == end.line {
@@ -683,7 +710,7 @@ fn parse(
 				} else {
 					text_line.line.len() - 1
 				};
-				text_line.line.apply_meta(start..=end, f);
+				text_line.line.annotate_range(start..=end, f);
 			}
 		}
 	}
@@ -694,7 +721,7 @@ fn parse(
 		if let Line::Text(text_line) = line {
 			text_line
 				.line
-				.apply_meta(start.column..=start.column, &Formatting::listchar());
+				.annotate_range(start.column..=start.column, &Formatting::listchar());
 		}
 	}
 
@@ -804,6 +831,8 @@ pub struct SnippetBuilder {
 	generator: FormattingGenerator,
 	annotations: Vec<Annotation>,
 	highlights_before: Vec<(RangeInclusive<usize>, Formatting)>,
+
+	file_name: Option<Text>,
 }
 impl SnippetBuilder {
 	pub fn new(src: impl AsRef<str>) -> Self {
@@ -812,7 +841,16 @@ impl SnippetBuilder {
 			generator: FormattingGenerator::new(src.as_ref().as_bytes()),
 			annotations: Vec::new(),
 			highlights_before: Vec::new(),
+			file_name: None,
 		}
+	}
+	pub fn with_file_name(mut self, filename: impl AsRef<str>, url: Option<String>) -> Self {
+		let mut formatting = Formatting::filename();
+		if let Some(url) = url {
+			formatting = formatting.url(url);
+		}
+		self.file_name = Some(Text::fragment(filename, formatting));
+		self
 	}
 	#[cfg(feature = "tree-sitter")]
 	pub fn highlight(
@@ -882,7 +920,7 @@ impl SnippetBuilder {
 		self.custom(Gamut::Blue, text)
 	}
 	pub fn build(self) -> Source {
-		parse(
+		let mut source = parse(
 			&self.src,
 			&self.annotations,
 			&Opts {
@@ -893,8 +931,37 @@ impl SnippetBuilder {
 				colorblind_output: false,
 			},
 			self.highlights_before,
-		)
+		);
+
+		if let Some(file_name) = self.file_name {
+			draw_file_name(&mut source, file_name);
+		}
+
+		let line_numbers = true;
+		if line_numbers {
+			draw_line_numbers(&mut source);
+		}
+
+		to_raw(&mut source);
+		source
 	}
+}
+
+fn draw_file_name(source: &mut Source, file_name: Text) {
+	source.lines.insert(
+		0,
+		Line::Border(BorderLine {
+			prefix: AnnotatedRope::new(),
+			line: [
+				AnnotatedRope::fragment("[", Formatting::listchar()),
+				file_name,
+				AnnotatedRope::fragment("]", Formatting::listchar()),
+			]
+			.into_iter()
+			.collect(),
+			top_border: true,
+		}),
+	);
 }
 
 #[must_use]
@@ -1154,7 +1221,8 @@ mod tests {
 			_ => continue,
 		}
 	}"#;
-		let mut snippet = SnippetBuilder::new(src);
+		let mut snippet = SnippetBuilder::new(src)
+			.with_file_name("source.rs", Some("file:/path/to/source.rs".to_owned()));
 		let language = tree_sitter_rust::LANGUAGE;
 		let mut config = HighlightConfiguration::new(
 			language.into(),
@@ -1189,7 +1257,7 @@ mod tests {
 			))
 			.range(22..=510)
 			.build();
-		let s = snippet.build().wrap_border();
+		let s = snippet.build();
 		println!("{}", source_to_ansi(&s))
 	}
 }
