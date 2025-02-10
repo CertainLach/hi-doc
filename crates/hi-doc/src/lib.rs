@@ -1,12 +1,10 @@
-extern crate hi_doc_jumprope as jumprope;
-
 use std::{
 	collections::{BTreeMap, BTreeSet, HashMap, HashSet},
 	mem,
 	ops::RangeInclusive,
 };
 
-mod segment;
+use annotated_string::AnnotatedRope;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 pub use formatting::Text;
@@ -16,7 +14,6 @@ use random_color::{
 	RandomColor,
 };
 use range_map::{Range, RangeSet};
-use segment::SegmentBuffer;
 use single_line::LineAnnotation;
 use unicode_box_drawing::bc;
 
@@ -29,12 +26,10 @@ use self::{
 
 mod annotation;
 mod anomaly_fixer;
-pub(crate) mod associated_data;
 mod chars;
 mod formatting;
 mod inline;
 mod single_line;
-use itertools::Itertools;
 
 #[derive(Clone, Debug)]
 struct RawLine {
@@ -259,7 +254,7 @@ fn draw_line_numbers(source: &mut Source) {
 			.unwrap_or(0);
 		let max_len = max_num.to_string().len();
 		let prefix_segment =
-			SegmentBuffer::segment(" ".repeat(max_len - 1), Formatting::line_number());
+			AnnotatedRope::fragment(" ".repeat(max_len - 1), Formatting::line_number());
 		for line in lines.iter_mut() {
 			match line {
 				Line::Text(t) => t.prefix.extend([SegmentBuffer::segment(
@@ -507,7 +502,7 @@ fn apply_annotations(source: &mut Source) {
 				Line::Annotation(AnnotationLine {
 					line,
 					annotation,
-					prefix: SegmentBuffer::new(),
+					prefix: AnnotatedRope::new(),
 				}),
 			);
 		}
@@ -532,7 +527,7 @@ fn apply_annotations(source: &mut Source) {
 				Line::Annotation(AnnotationLine {
 					line,
 					annotation,
-					prefix: SegmentBuffer::new(),
+					prefix: AnnotatedRope::new(),
 				}),
 			);
 		}
@@ -565,12 +560,12 @@ fn process(
 		for line in &mut source.lines {
 			match line {
 				Line::Text(t) => {
-					let mut buf = SegmentBuffer::new();
+					let mut buf = AnnotatedRope::new();
 					buf.extend([t.prefix.clone(), t.line.clone()]);
 					*line = Line::Raw(RawLine { data: buf });
 				}
 				Line::Annotation(t) => {
-					let mut buf = SegmentBuffer::new();
+					let mut buf = AnnotatedRope::new();
 					buf.extend([t.prefix.clone(), t.line.clone()]);
 					*line = Line::Raw(RawLine { data: buf })
 				}
@@ -657,13 +652,13 @@ fn parse(
 			let chars = line.chars().chain([' ']).collect::<String>();
 			TextLine {
 				line_num: num + 1,
-				line: SegmentBuffer::segment(
+				line: AnnotatedRope::fragment(
 					// Reserve 1 char for the spans pointing to EOL
 					chars,
 					Formatting::default(),
 				),
 				annotation: None,
-				prefix: SegmentBuffer::new(),
+				prefix: AnnotatedRope::new(),
 				annotations: Vec::new(),
 				bottom_annotations: Vec::new(),
 				top_annotations: Vec::new(),
@@ -978,23 +973,23 @@ mod tests {
 	fn readme() {
 		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
 		snippet
-			.error(Text::segment("Local defs", default()))
+			.error(Text::fragment("Local defs", default()))
 			.ranges([4..=8, 3142..=3146])
 			.build();
 		snippet
-			.warning(Text::segment("Local name", default()))
+			.warning(Text::fragment("Local name", default()))
 			.range(10..=12)
 			.build();
 		snippet
-			.info(Text::segment("Equals", default()))
+			.info(Text::fragment("Equals", default()))
 			.range(14..=14)
 			.build();
 		snippet
-			.note(Text::segment("Connected definition", default()))
+			.note(Text::fragment("Connected definition", default()))
 			.ranges([3133..=3135, 6155..=6157])
 			.build();
 		snippet
-			.note(Text::segment("Another connected definition", default()))
+			.note(Text::fragment("Another connected definition", default()))
 			.ranges([5909..=5913, 6062..=6066, 6242..=6244])
 			.build();
 		let s = snippet.build();
@@ -1005,15 +1000,15 @@ mod tests {
 	fn test_fmt() {
 		let mut snippet = SnippetBuilder::new(include_str!("../../../fixtures/std.jsonnet"));
 		snippet
-			.info(Text::segment("Hello world", default()))
+			.info(Text::fragment("Hello world", default()))
 			.range(2832..=3135)
 			.build();
 		snippet
-			.warning(Text::segment("Conflict", default()))
+			.warning(Text::fragment("Conflict", default()))
 			.range(2838..=2847)
 			.build();
 		snippet
-			.error(Text::segment("Still has text", default()))
+			.error(Text::fragment("Still has text", default()))
 			.range(2839..=2846)
 			.build();
 		let s = snippet.build();
@@ -1024,17 +1019,17 @@ mod tests {
 	fn fullwidth_marker() {
 		let mut snippet = SnippetBuilder::new("ＡＢＣ");
 		snippet
-			.info(Text::segment("a", default()))
+			.info(Text::fragment("a", default()))
 			.range(0..=2)
 			.above()
 			.build();
 		snippet
-			.info(Text::segment("b", default()))
+			.info(Text::fragment("b", default()))
 			.range(3..=5)
 			.above()
 			.build();
 		snippet
-			.info(Text::segment("c", default()))
+			.info(Text::fragment("c", default()))
 			.range(6..=8)
 			.above()
 			.build();
@@ -1051,21 +1046,21 @@ mod tests {
 					priority: 0,
 					formatting: Formatting::color(0xff000000),
 					ranges: [Range::new(0, 2)].into_iter().collect(),
-					text: Text::segment("a", default()),
+					text: Text::fragment("a", default()),
 					location: AnnotationLocation::BelowOrInline,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x00ff0000),
 					ranges: [Range::new(3, 5)].into_iter().collect(),
-					text: Text::segment("b", default()),
+					text: Text::fragment("b", default()),
 					location: AnnotationLocation::BelowOrInline,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x0000ff00),
 					ranges: [Range::new(6, 8)].into_iter().collect(),
-					text: Text::segment("c", default()),
+					text: Text::fragment("c", default()),
 					location: AnnotationLocation::BelowOrInline,
 				},
 			],
@@ -1090,14 +1085,14 @@ mod tests {
 					priority: 0,
 					formatting: Formatting::color(0xff000000),
 					ranges: [Range::new(17, 17)].into_iter().collect(),
-					text: Text::segment("Line start", default()),
+					text: Text::fragment("Line start", default()),
 					location: AnnotationLocation::Below,
 				},
 				Annotation {
 					priority: 0,
 					formatting: Formatting::color(0x00ff0000),
 					ranges: [Range::new(18, 18)].into_iter().collect(),
-					text: Text::segment("Aligned", default()),
+					text: Text::fragment("Aligned", default()),
 					location: AnnotationLocation::Below,
 				},
 			],
@@ -1118,17 +1113,17 @@ mod tests {
 		let mut snippet = SnippetBuilder::new("012345678901234567890");
 
 		snippet
-			.error(Text::segment("a", Default::default()))
+			.error(Text::fragment("a", Default::default()))
 			.range(0..=3)
 			.range(10..=13)
 			.build();
 		snippet
-			.error(Text::segment("b", Default::default()))
+			.error(Text::fragment("b", Default::default()))
 			.range(2..=2)
 			.range(10..=13)
 			.build();
 		snippet
-			.error(Text::segment("c", Default::default()))
+			.error(Text::fragment("c", Default::default()))
 			.range(3..=3)
 			.range(10..=13)
 			.build();
@@ -1181,14 +1176,14 @@ mod tests {
 			}
 		});
 		snippet
-			.error(Text::segment(
+			.error(Text::fragment(
 				"expected `Option<String>` because of return type",
 				Formatting::default(),
 			))
 			.range(5..=18)
 			.build();
 		snippet
-			.note(Text::segment(
+			.note(Text::fragment(
 				"expected enum `std::option::Option`",
 				default(),
 			))

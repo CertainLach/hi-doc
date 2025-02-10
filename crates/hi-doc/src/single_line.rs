@@ -13,6 +13,7 @@ use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 };
 
+use annotated_string::AnnotatedRope;
 use itertools::Itertools;
 use num_traits::PrimInt;
 use range_map::RangeSet;
@@ -22,7 +23,6 @@ use crate::{
 	annotation::{AnnotationId, AnnotationLocation},
 	anomaly_fixer::apply_fixup,
 	chars::{cross_vertical, BoxCharacterExt, PreserveStyle},
-	segment::SegmentBuffer,
 	Formatting, Text,
 };
 
@@ -135,7 +135,7 @@ fn draw_layer_single_annotation(
 			.char_round();
 			layer.splice(
 				char_to_display(*start)..=char_to_display(*start),
-				Some(SegmentBuffer::segment(
+				Some(AnnotatedRope::fragment(
 					c.to_string(),
 					annotation.formatting.clone(),
 				)),
@@ -146,7 +146,7 @@ fn draw_layer_single_annotation(
 			let size = char_to_display(min) - char_to_display(min_pos);
 			layer.splice(
 				char_to_display(min_pos)..char_to_display(min),
-				Some(SegmentBuffer::segment(
+				Some(AnnotatedRope::fragment(
 					bc!(rl).char_round().to_string().repeat(size),
 					annotation.formatting.clone(),
 				)),
@@ -166,17 +166,17 @@ fn draw_layer_single_annotation(
 		let size = max_range_display - char_to_display(max) + LABEL_PADDING;
 		layer.splice(
 			char_to_display(max) + 1..max_range_display + 1,
-			Some(SegmentBuffer::segment(
+			Some(AnnotatedRope::fragment(
 				bc!(rl).char_round().to_string().repeat(size),
 				annotation.formatting.clone(),
 			)),
 		);
-		layer.extend([Text::segment(" ", Default::default())]);
+		layer.extend([Text::fragment(" ", Default::default())]);
 		let lines = right.split('\n');
 		layer.append(lines[0].clone());
 		for right in lines.iter().skip(1) {
 			let mut fmtlayer =
-				SegmentBuffer::segment(" ".repeat(max_range_display), Formatting::default());
+				AnnotatedRope::fragment(" ".repeat(max_range_display), Formatting::default());
 			fmtlayer.append(right.clone());
 			extralayers.push((None, fmtlayer));
 		}
@@ -187,7 +187,7 @@ fn draw_layer_single_annotation(
 		}
 		layer.splice(
 			i..=i,
-			Some(SegmentBuffer::segment(
+			Some(AnnotatedRope::fragment(
 				bc!(rl).char_round().to_string(),
 				annotation.formatting.clone(),
 			)),
@@ -252,7 +252,7 @@ pub(crate) fn generate_range_annotations(
 		// use crate::chars::single::*;
 		// let chars = if bottom { &BOTTOM } else { &TOP };
 		for layer in per_line_ranges.iter_mut() {
-			let mut fmtlayer = SegmentBuffer::segment(
+			let mut fmtlayer = AnnotatedRope::fragment(
 				// TODO: Avoid allocation?
 				" ".repeat(max_range_display + 1),
 				Formatting::default(),
@@ -331,7 +331,7 @@ pub(crate) fn generate_range_annotations(
 					};
 					fmtlayer.splice(
 						char_to_display(range.start)..=char_to_display(range.end),
-						Some(SegmentBuffer::segment_chars(
+						Some(AnnotatedRope::fragment_chars(
 							data,
 							annotation.formatting.clone(),
 						)),
@@ -368,7 +368,7 @@ pub(crate) fn generate_range_annotations(
 						if let Some((keep_style, replacement)) = cross_vertical(c) {
 							other.1.splice(
 								char_to_display(start)..=char_to_display(start),
-								Some(SegmentBuffer::segment(
+								Some(AnnotatedRope::fragment(
 									replacement.to_string(),
 									match keep_style {
 										PreserveStyle::Keep => orig_fmt.clone(),
@@ -457,7 +457,7 @@ pub(crate) fn generate_range_annotations(
 	{
 		for annotation in &annotations {
 			let mut fmtlayer =
-				SegmentBuffer::segment(" ".repeat(max_range_display + 1), Formatting::default());
+				AnnotatedRope::fragment(" ".repeat(max_range_display + 1), Formatting::default());
 			let mut extralayers = Vec::new();
 
 			let left = draw_layer_single_annotation(
@@ -486,7 +486,7 @@ pub(crate) fn generate_range_annotations(
 					if let Some((keep_style, replacement)) = cross_vertical(c) {
 						affected.1.splice(
 							char_to_display(start)..=char_to_display(start),
-							Some(SegmentBuffer::segment(
+							Some(AnnotatedRope::fragment(
 								replacement.to_string(),
 								match keep_style {
 									PreserveStyle::Keep => orig_fmt.clone(),

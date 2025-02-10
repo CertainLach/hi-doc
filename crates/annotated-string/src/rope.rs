@@ -1,43 +1,32 @@
-use core::fmt;
-use std::cell::Ref;
-use std::cmp::Ordering;
-use std::ops::{Bound, Range, RangeBounds};
-/// Mutable rich text implementation
-use std::str;
+use std::{
+	cell,
+	cmp::Ordering,
+	fmt,
+	iter::repeat,
+	ops::{Bound, Range, RangeBounds},
+};
 
-use crate::associated_data::AssociatedData;
-use jumprope::{JumpRope, JumpRopeBuf};
+use hi_doc_jumprope::{
+	iter::{Chars, ContentIter, SliceIter, Substrings},
+	JumpRope, JumpRopeBuf,
+};
 
-pub trait Meta: Clone {
-	fn try_merge(&mut self, other: &Self) -> bool;
-}
-impl Meta for usize {
-	fn try_merge(&mut self, other: &Self) -> bool {
-		if *self != *other {
-			return false;
-		}
-		true
-	}
-}
-
-pub trait MetaApply<T> {
-	fn apply(&mut self, change: &T);
-}
+use crate::{AnnotatedRange, ApplyAnnotation};
 
 #[derive(Clone, Debug)]
-pub struct SegmentBuffer<M> {
+pub struct AnnotatedRope<M> {
 	rope: JumpRopeBuf,
-	meta: AssociatedData<M>,
+	meta: AnnotatedRange<M>,
 }
 
 #[ouroboros::self_referencing]
-pub struct JumpRopeBufIter<'r> {
-	rope_buf: Ref<'r, JumpRope>,
+pub struct Fragments<'r> {
+	rope_buf: cell::Ref<'r, JumpRope>,
 	#[borrows(rope_buf)]
 	#[not_covariant]
-	iter: jumprope::iter::Substrings<'this, jumprope::iter::SliceIter<'this>>,
+	iter: Substrings<'this, SliceIter<'this>>,
 }
-impl<'f> Iterator for JumpRopeBufIter<'f> {
+impl<'f> Iterator for Fragments<'f> {
 	type Item = &'f str;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -56,10 +45,10 @@ impl<'f> Iterator for JumpRopeBufIter<'f> {
 }
 #[ouroboros::self_referencing]
 pub struct JumpRopeBufCharIter<'r> {
-	rope_buf: Ref<'r, JumpRope>,
+	rope_buf: cell::Ref<'r, JumpRope>,
 	#[borrows(rope_buf)]
 	#[covariant]
-	iter: jumprope::iter::Chars<'this, jumprope::iter::ContentIter<'this>>,
+	iter: Chars<'this, ContentIter<'this>>,
 }
 impl Iterator for JumpRopeBufCharIter<'_> {
 	type Item = char;
@@ -83,39 +72,40 @@ fn bounds_to_exclusive(bounds: impl RangeBounds<usize>, len: usize) -> Range<usi
 	start..end
 }
 
-impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
+impl<M: Clone + fmt::Debug> AnnotatedRope<M> {
 	pub fn new() -> Self {
 		Self {
 			rope: JumpRopeBuf::new(),
-			meta: AssociatedData::new(),
+			meta: AnnotatedRange::new(),
 		}
 	}
-	pub fn segment(v: impl AsRef<str>, meta: M) -> Self {
+	pub fn fragment(v: impl AsRef<str>, meta: M) -> Self {
 		let v: String = v.as_ref().to_string();
 		let rope: JumpRopeBuf = v.into();
 		if rope.is_empty() {
 			Self::new()
 		} else {
 			Self {
-				meta: AssociatedData::with_size(rope.len_chars(), meta),
+				meta: AnnotatedRange::with_size(rope.len_chars(), meta),
 				rope,
 			}
 		}
 	}
-	pub fn segment_chars(v: impl IntoIterator<Item = char>, meta: M) -> Self {
+	pub fn fragment_chars(v: impl IntoIterator<Item = char>, meta: M) -> Self {
 		let v: String = v.into_iter().collect();
 		let rope: JumpRopeBuf = v.into();
 		if rope.is_empty() {
 			Self::new()
 		} else {
 			Self {
-				meta: AssociatedData::with_size(rope.len_chars(), meta),
+				meta: AnnotatedRange::with_size(rope.len_chars(), meta),
 				rope,
 			}
 		}
 	}
-	pub fn repeat_char(char: char, count: usize, meta: M) -> Self {
-		Self::segment(char.to_string().repeat(count), meta)
+	#[deprecated = "use fragment_chars with repeated char"]
+	pub fn repeated_char_fragment(char: char, count: usize, meta: M) -> Self {
+		Self::fragment(char.to_string().repeat(count), meta)
 	}
 	pub fn insert(&mut self, position: usize, buf: Self) {
 		let incoming = buf.rope.borrow();
@@ -147,10 +137,10 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 	pub fn append(&mut self, buf: Self) {
 		self.extend([buf]);
 	}
-	pub fn iter(&self) -> impl IntoIterator<Item = (JumpRopeBufIter<'_>, &'_ M)> {
+	pub fn fragments(&self) -> impl IntoIterator<Item = (Fragments<'_>, &'_ M)> {
 		self.meta.iter().map(|v| {
 			(
-				JumpRopeBufIter::new(self.rope.borrow(), |r| r.slice_substrings(v.1)),
+				Fragments::new(self.rope.borrow(), |r| r.slice_substrings(v.1)),
 				v.0,
 			)
 		})
@@ -176,7 +166,10 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 	pub fn resize(&mut self, size: usize, char: char, meta: M) {
 		match size.cmp(&self.len()) {
 			Ordering::Less => self.remove(size..),
-			Ordering::Greater => self.extend([Self::repeat_char(char, size - self.len(), meta)]),
+			Ordering::Greater => self.extend([Self::fragment_chars(
+				repeat(char).take(size - self.len()),
+				meta,
+			)]),
 			Ordering::Equal => {}
 		}
 	}
@@ -190,11 +183,11 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 		let meta = self.meta.clone();
 		let (meta_left, meta_right) = meta.split(pos);
 		(
-			SegmentBuffer {
+			AnnotatedRope {
 				rope: left.into(),
 				meta: meta_left,
 			},
-			SegmentBuffer {
+			AnnotatedRope {
 				rope: right.into(),
 				meta: meta_right,
 			},
@@ -216,15 +209,15 @@ impl<M: Clone + fmt::Debug> SegmentBuffer<M> {
 	}
 }
 
-impl<M: Clone + fmt::Debug> Default for SegmentBuffer<M> {
+impl<M: Clone + fmt::Debug> Default for AnnotatedRope<M> {
 	fn default() -> Self {
 		Self::new()
 	}
 }
-impl<M: Clone + PartialEq + fmt::Debug> SegmentBuffer<M> {
+impl<M: Clone + PartialEq + fmt::Debug> AnnotatedRope<M> {
 	pub fn apply_meta<T>(&mut self, range: impl RangeBounds<usize>, value: &T)
 	where
-		M: MetaApply<T>,
+		M: ApplyAnnotation<T>,
 	{
 		self.meta
 			.apply_meta(bounds_to_exclusive(range, self.len()), value)

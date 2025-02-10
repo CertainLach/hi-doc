@@ -1,8 +1,8 @@
 use core::fmt;
 
-use crate::segment::{Meta, MetaApply, SegmentBuffer};
+use annotated_string::{ApplyAnnotation, AnnotatedRope, Annotation};
 
-pub type Text = SegmentBuffer<Formatting>;
+pub type Text = AnnotatedRope<Formatting>;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct Formatting {
@@ -13,13 +13,13 @@ pub struct Formatting {
 	pub decoration: bool,
 	pub url: Option<String>,
 }
-impl Meta for Formatting {
+impl Annotation for Formatting {
 	fn try_merge(&mut self, other: &Self) -> bool {
 		self == other
 	}
 }
 
-impl MetaApply<Formatting> for Formatting {
+impl ApplyAnnotation<Formatting> for Formatting {
 	fn apply(&mut self, change: &Formatting) {
 		if let Some(color) = change.color {
 			self.color = Some(color);
@@ -40,7 +40,7 @@ impl MetaApply<Formatting> for Formatting {
 }
 
 pub struct AddColorToUncolored(pub u32);
-impl MetaApply<AddColorToUncolored> for Formatting {
+impl ApplyAnnotation<AddColorToUncolored> for Formatting {
 	fn apply(&mut self, change: &AddColorToUncolored) {
 		if self.color.is_some() {
 			return;
@@ -60,7 +60,13 @@ impl Formatting {
 	pub fn line_number() -> Self {
 		Self {
 			color: Some(0x92837400),
-			bg_color: Some(0x28282800),
+			// bg_color: Some(0x28282800),
+			..Default::default()
+		}
+	}
+	pub fn border() -> Self {
+		Self {
+			color: Some(0xffffff00),
 			..Default::default()
 		}
 	}
@@ -106,7 +112,7 @@ pub fn text_to_ansi(buf: &Text, out: &mut String) {
 pub fn text_to_ansi_res(buf: &Text, out: &mut String) -> fmt::Result {
 	use std::fmt::Write;
 
-	for (text, meta) in buf.iter() {
+	for (text, meta) in buf.fragments() {
 		if meta.bold {
 			write!(out, "{CSI}1m")?;
 		}

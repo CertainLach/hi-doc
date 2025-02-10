@@ -1,0 +1,14 @@
+[package]
+name = "annotated-string"
+edition = "2021"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+hi-doc-jumprope = { workspace = true, optional = true }
+itertools.workspace = true
+ouroboros.workspace = true
+
+[features]
+default = ["rope"]
+rope = ["hi-doc-jumprope"]

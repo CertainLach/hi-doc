@@ -1,14 +1,11 @@
-//! Implementation becomes much fancier with cursors.
-
-use itertools::Itertools;
-
-use crate::segment::MetaApply;
-use core::fmt;
 use std::cell::Cell;
-use std::collections::btree_map::Iter;
-use std::collections::BTreeMap;
+use std::collections::{btree_map, BTreeMap};
+use std::fmt;
 use std::iter::Peekable;
 use std::ops::Range;
+use itertools::Itertools;
+
+use crate::ApplyAnnotation;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Default, Clone)]
 struct MutableOffset(Cell<usize>);
@@ -30,7 +27,7 @@ impl fmt::Debug for MutableOffset {
 }
 
 #[derive(Debug, Clone)]
-pub struct AssociatedData<D> {
+pub struct AnnotatedRange<D> {
 	// Segment start => Data
 	// As every segment needs to be annotated (Otherwise, use Option<D>),
 	// no need to keep segment sizes here.
@@ -43,7 +40,7 @@ pub struct AssociatedData<D> {
 fn assert_none<T>(v: Option<T>) {
 	debug_assert!(v.is_none());
 }
-impl<D: Clone + fmt::Debug> AssociatedData<D> {
+impl<D: Clone + fmt::Debug> AnnotatedRange<D> {
 	pub fn new() -> Self {
 		Self {
 			data: BTreeMap::new(),
@@ -227,7 +224,7 @@ impl<D: Clone + fmt::Debug> AssociatedData<D> {
 		self.data.insert(MutableOffset::new(pos), data);
 	}
 }
-impl<D: Clone + PartialEq> AssociatedData<D> {
+impl<D: Clone + PartialEq> AnnotatedRange<D> {
 	// Compare meta at chunks on `(pos..)` and `(..pos-1)`
 	// If it equals - merge those two chunks
 	fn merge_hint(&mut self, pos: usize) {
@@ -249,10 +246,10 @@ impl<D: Clone + PartialEq> AssociatedData<D> {
 	}
 }
 
-impl<D: Clone + PartialEq + fmt::Debug> AssociatedData<D> {
+impl<D: Clone + PartialEq + fmt::Debug> AnnotatedRange<D> {
 	pub fn apply_meta<T>(&mut self, range: Range<usize>, change: &T)
 	where
-		D: MetaApply<T>,
+		D: ApplyAnnotation<T>,
 	{
 		self.cut(range.start);
 		self.cut(range.end);
@@ -267,7 +264,7 @@ impl<D: Clone + PartialEq + fmt::Debug> AssociatedData<D> {
 	}
 }
 pub struct AssocIterator<'a, D> {
-	inner: Peekable<Iter<'a, MutableOffset, D>>,
+	inner: Peekable<btree_map::Iter<'a, MutableOffset, D>>,
 	total_size: usize,
 }
 impl<'a, D> Iterator for AssocIterator<'a, D> {
@@ -287,9 +284,9 @@ impl<'a, D> Iterator for AssocIterator<'a, D> {
 
 #[test]
 fn assoc_smoke() {
-	let mut data = <AssociatedData<char>>::new();
-	data.insert(0, AssociatedData::with_size(3, 'a'));
-	data.insert(2, AssociatedData::with_size(1, 'c'));
-	data.insert(0, AssociatedData::with_size(3, 'b'));
+	let mut data = <AnnotatedRange<char>>::new();
+	data.insert(0, AnnotatedRange::with_size(3, 'a'));
+	data.insert(2, AnnotatedRange::with_size(1, 'c'));
+	data.insert(0, AnnotatedRange::with_size(3, 'b'));
 	data.remove(1..3);
 }
