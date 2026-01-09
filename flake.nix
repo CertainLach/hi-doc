@@ -1,7 +1,7 @@
 {
-  description = "Diagnostics library";
+  description = "Hi-doc diagnostics rendering library";
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs/release-25.11";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";

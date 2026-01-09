@@ -94,6 +94,7 @@ pub(crate) fn group_nonconflicting<T: PrimInt + fmt::Debug>(
 	layers
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_layer_single_annotation(
 	layer: &mut Text,
 	annotation: &LineAnnotation,

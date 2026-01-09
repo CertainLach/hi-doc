@@ -2,7 +2,7 @@ use std::{
 	cell,
 	cmp::Ordering,
 	fmt,
-	iter::repeat,
+	iter::repeat_n,
 	ops::{Bound, Range, RangeBounds},
 };
 
@@ -173,7 +173,7 @@ impl<M: Clone> AnnotatedRope<M> {
 		match size.cmp(&self.len()) {
 			Ordering::Less => self.remove(size..),
 			Ordering::Greater => self.extend([Self::fragment_chars(
-				repeat(char).take(size - self.len()),
+				repeat_n(char, size - self.len()),
 				meta,
 			)]),
 			Ordering::Equal => {}

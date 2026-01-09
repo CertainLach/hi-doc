@@ -481,7 +481,7 @@ fn generate_annotations_line(line: &mut TextLine, opts: &Opts) {
 		.into_iter()
 		.partition::<Vec<LineAnnotation>, _>(|v| v.location.is_below() && !v.location.is_above());
 
-	let target_above = (total + above.len() - below.len() + 1) / 2;
+	let target_above = (total + above.len() - below.len()).div_ceil(2);
 	let needed_above = target_above.saturating_sub(above.len());
 
 	let below_both = both.split_off(needed_above.min(both.len()));
@@ -819,7 +819,7 @@ impl FormattingGenerator {
 	}
 	fn next(&mut self) -> RandomColor {
 		let mut color = RandomColor::new();
-		color.seed(self.rand.gen::<u64>());
+		color.seed(self.rand.random::<u64>());
 		color.luminosity(Luminosity::Bright);
 		color
 	}
