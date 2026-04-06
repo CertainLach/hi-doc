@@ -181,6 +181,7 @@ impl Line {
 #[derive(Debug)]
 pub struct Source {
 	lines: Vec<Line>,
+	colorless: bool,
 }
 
 fn cleanup_nops(source: &mut Source) {
@@ -496,6 +497,7 @@ fn generate_annotations_line(line: &mut TextLine, opts: &Opts) {
 			&char_to_display_fixup,
 			&hide_ranges_for,
 			!above,
+			opts.ascii,
 		);
 		if above {
 			extra.reverse();
@@ -606,6 +608,20 @@ fn to_raw(source: &mut Source) {
 			Line::Raw(_) | Line::Nop => {}
 		}
 	}
+}
+
+/// Returns (first_non_ws, last_non_ws) char indices for a text line.
+/// The line is expected to have a trailing space (from parse).
+fn line_text_bounds(text: &Text) -> (usize, usize) {
+	let chars: Vec<char> = text.chars().collect();
+	let leading = chars.iter().take_while(|c| c.is_whitespace()).count();
+	let trailing_ws = chars.iter().rev().take_while(|c| c.is_whitespace()).count();
+	let trailing = chars
+		.len()
+		.saturating_sub(1)
+		.saturating_sub(trailing_ws)
+		.max(leading);
+	(leading, trailing)
 }
 
 fn linestarts(str: &str) -> BTreeSet<usize> {
@@ -738,15 +754,20 @@ fn parse(
 				{
 					let set = line_ranges.entry(start.line).or_insert_with(RangeSet::new);
 					let line = lines[start.line].as_text().expect("annotation OOB");
-					*set = set.union(
-						&[Range::new(start.column, line.len() - 1)]
-							.into_iter()
-							.collect(),
-					);
+					let (leading, trailing) = line_text_bounds(&line.line);
+					let range_start = start.column.max(leading);
+					let range_end = trailing.max(start.column);
+					*set = set.union(&[Range::new(range_start, range_end)].into_iter().collect());
 				}
 				{
 					let set = line_ranges.entry(end.line).or_insert_with(RangeSet::new);
-					*set = set.union(&[Range::new(0, end.column)].into_iter().collect());
+					let line = lines[end.line].as_text().expect("annotation OOB");
+					let (leading, trailing) = line_text_bounds(&line.line);
+					*set = set.union(
+						&[Range::new(leading, end.column.max(trailing))]
+							.into_iter()
+							.collect(),
+					);
 				}
 			}
 		}
@@ -773,7 +794,10 @@ fn parse(
 		}
 	}
 
-	let mut source = Source { lines };
+	let mut source = Source {
+		lines,
+		colorless: opts.colorless,
+	};
 
 	let annotation_formats = annotations
 		.iter()
@@ -793,7 +817,11 @@ pub fn source_to_ansi(source: &Source) -> String {
 			.as_raw()
 			.expect("after processing all lines should turn raw");
 		let data = line.data.clone();
-		formatting::text_to_ansi(&data, &mut out);
+		if source.colorless {
+			formatting::text_to_ansi_colorless(&data, &mut out);
+		} else {
+			formatting::text_to_ansi(&data, &mut out);
+		}
 		out.push('\n');
 	}
 	out
@@ -833,6 +861,8 @@ pub struct SnippetBuilder {
 	highlights_before: Vec<(RangeInclusive<usize>, Formatting)>,
 
 	file_name: Option<Text>,
+	ascii: bool,
+	colorless: bool,
 }
 impl SnippetBuilder {
 	pub fn new(src: impl AsRef<str>) -> Self {
@@ -842,7 +872,17 @@ impl SnippetBuilder {
 			annotations: Vec::new(),
 			highlights_before: Vec::new(),
 			file_name: None,
+			ascii: false,
+			colorless: false,
 		}
+	}
+	pub fn ascii(mut self) -> Self {
+		self.ascii = true;
+		self
+	}
+	pub fn colorless(mut self) -> Self {
+		self.colorless = true;
+		self
 	}
 	pub fn with_file_name(mut self, filename: impl AsRef<str>, url: Option<String>) -> Self {
 		let mut formatting = Formatting::filename();
@@ -920,15 +960,19 @@ impl SnippetBuilder {
 		self.custom(Gamut::Blue, text)
 	}
 	pub fn build(self) -> Source {
+		let colorless = self.colorless;
+		let ascii = self.ascii;
 		let mut source = parse(
 			&self.src,
 			&self.annotations,
 			&Opts {
-				colored_range_display: true,
+				colored_range_display: !colorless,
 				fold: true,
 				tab_width: 4,
 				context_lines: 2,
-				colorblind_output: false,
+				colorblind_output: colorless,
+				ascii,
+				colorless,
 			},
 			self.highlights_before,
 		);
@@ -943,7 +987,66 @@ impl SnippetBuilder {
 		}
 
 		to_raw(&mut source);
+
+		if ascii {
+			convert_to_ascii(&mut source);
+		}
+
 		source
+	}
+}
+
+fn convert_char_ascii(c: char) -> Option<&'static str> {
+	use unicode_box_drawing::BoxCharacter;
+	if let Some(bc) = BoxCharacter::decode_char(c) {
+		return Some(match bc.char_ascii() {
+			'|' => "|",
+			'-' => "-",
+			'+' => "+",
+			_ => " ",
+		});
+	}
+	match c {
+		'🢒' => Some("->"),
+		'·' => Some("."),
+		_ => None,
+	}
+}
+
+fn convert_to_ascii(source: &mut Source) {
+	for line in &mut source.lines {
+		let Line::Raw(raw) = line else { continue };
+		let mut new_rope = Text::new();
+		let mut current_buf = String::new();
+		let mut current_fmt: Option<Formatting> = None;
+
+		let mut i = 0;
+		while i < raw.data.len() {
+			let (c, fmt) = raw.data.get(i).unwrap();
+			let fmt = fmt.clone();
+
+			if current_fmt.as_ref() != Some(&fmt) {
+				if !current_buf.is_empty() {
+					new_rope.extend([Text::fragment(
+						mem::take(&mut current_buf),
+						current_fmt.take().unwrap(),
+					)]);
+				}
+				current_fmt = Some(fmt);
+			}
+
+			if let Some(replacement) = convert_char_ascii(c) {
+				current_buf.push_str(replacement);
+			} else {
+				current_buf.push(c);
+			}
+			i += 1;
+		}
+		if !current_buf.is_empty() {
+			new_rope.extend([Text::fragment(current_buf, current_fmt.unwrap())]);
+		}
+
+		raw.data = new_rope;
 	}
 }
 
@@ -1018,8 +1121,19 @@ impl AnnotationBuilder<'_> {
 			priority: self.priority,
 			formatting: self.formatting,
 			ranges: self.ranges.into_iter().collect(),
+			location: match self.location {
+				AnnotationLocation::Any | AnnotationLocation::AnyNotInline
+					if self.text.index_of('\n').is_some() || self.snippet.ascii =>
+				{
+					if self.location.is_inline() {
+						AnnotationLocation::BelowOrInline
+					} else {
+						AnnotationLocation::Below
+					}
+				}
+				l => l,
+			},
 			text: self.text,
-			location: self.location,
 		});
 	}
 }

@@ -291,6 +291,17 @@ impl BoxCharacter {
 	pub const fn char_dotted_w4(&self) -> char {
 		line_dotted_w4(self.char())
 	}
+	pub const fn char_ascii(&self) -> char {
+		let r = self.raw();
+		let vert = r.top.bits() != 0 || r.bottom.bits() != 0;
+		let horiz = r.left.bits() != 0 || r.right.bits() != 0;
+		match (vert, horiz) {
+			(false, false) => ' ',
+			(true, false) => '|',
+			(false, true) => '-',
+			(true, true) => '+',
+		}
+	}
 	pub fn decode_char(v: char) -> Option<Self> {
 		if v == ' ' {
 			return Some(Self(0));

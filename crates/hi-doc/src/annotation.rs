@@ -22,6 +22,13 @@ pub struct Opts {
 
 	/// Allow formatting which is only recognizable by color.
 	pub colorblind_output: bool,
+
+	/// Use ASCII-only characters instead of Unicode box drawing.
+	pub ascii: bool,
+
+	/// Disable color output. Forces explicit range annotations
+	/// since color can no longer carry semantic information.
+	pub colorless: bool,
 }
 
 #[derive(Clone, Debug)]

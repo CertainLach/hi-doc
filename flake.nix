@@ -1,7 +1,7 @@
 {
   description = "Hi-doc diagnostics rendering library";
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs/release-26.05";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -13,36 +13,39 @@
     crane.url = "github:ipetkov/crane";
     shelly.url = "github:CertainLach/shelly";
   };
-  outputs = inputs:
-    inputs.flake-parts.lib.mkFlake {inherit inputs;}
-    {
-      imports = [inputs.shelly.flakeModule];
+  outputs =
+    inputs:
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ inputs.shelly.flakeModule ];
       systems = inputs.nixpkgs.lib.systems.flakeExposed;
-      perSystem = {
-        self',
-        inputs',
-        system,
-        pkgs,
-        lib,
-        ...
-      }: let
-        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
-      in {
-        _module.args.pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = [inputs.rust-overlay.overlays.default];
+      perSystem =
+        {
+          self',
+          inputs',
+          system,
+          pkgs,
+          lib,
+          ...
+        }:
+        let
+          rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
+        in
+        {
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [ inputs.rust-overlay.overlays.default ];
+          };
+          shelly.shells.default = {
+            factory = craneLib.devShell;
+            packages = with pkgs; [
+              rust
+              cargo-edit
+              cmake
+            ];
+            environment.NIX_FMT = lib.getExe self'.formatter;
+          };
+          formatter = pkgs.alejandra;
         };
-        shelly.shells.default = {
-          factory = craneLib.devShell;
-          packages = with pkgs; [
-            rust
-            cargo-edit
-            cmake
-          ];
-          environment.NIX_FMT = lib.getExe self'.formatter;
-        };
-        formatter = pkgs.alejandra;
-      };
     };
 }

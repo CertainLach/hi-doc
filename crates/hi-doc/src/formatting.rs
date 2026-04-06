@@ -133,7 +133,6 @@ pub fn text_to_ansi_res(buf: &Text, out: &mut String) -> fmt::Result {
 			let [r, g, b, _a] = u32::to_be_bytes(bg_color);
 			write!(out, "{CSI}48;2;{r};{g};{b}m")?;
 		}
-		// We might want to add `id=` parameter to make terminals highlight split `Text`?
 		if let Some(url) = &meta.url {
 			write!(out, "{OSC}8;;{url}{ST}")?;
 		}
@@ -144,6 +143,38 @@ pub fn text_to_ansi_res(buf: &Text, out: &mut String) -> fmt::Result {
 			write!(out, "{OSC}8;;{ST}")?;
 		}
 		if meta.color.is_some() || meta.bg_color.is_some() || meta.underline || meta.bold {
+			write!(out, "{CSI}0m")?;
+		}
+	}
+	Ok(())
+}
+
+pub fn text_to_ansi_colorless(buf: &Text, out: &mut String) {
+	text_to_ansi_colorless_res(buf, out).expect("no fmt error")
+}
+pub fn text_to_ansi_colorless_res(buf: &Text, out: &mut String) -> fmt::Result {
+	use std::fmt::Write;
+
+	for (text, meta) in buf.fragments() {
+		let mut styled = false;
+		if meta.bold {
+			write!(out, "{CSI}1m")?;
+			styled = true;
+		}
+		if meta.underline {
+			write!(out, "{CSI}4m")?;
+			styled = true;
+		}
+		if let Some(url) = &meta.url {
+			write!(out, "{OSC}8;;{url}{ST}")?;
+		}
+		for chunk in text {
+			write!(out, "{chunk}")?;
+		}
+		if meta.url.is_some() {
+			write!(out, "{OSC}8;;{ST}")?;
+		}
+		if styled {
 			write!(out, "{CSI}0m")?;
 		}
 	}

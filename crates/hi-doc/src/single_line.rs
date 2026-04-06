@@ -104,6 +104,7 @@ fn draw_layer_single_annotation(
 	max_range_display: usize,
 	extralayers: &mut Vec<(Option<AnnotationId>, Text)>,
 	is_inline: bool,
+	ascii: bool,
 ) -> Option<AnnotationId> {
 	let starts = annotation
 		.ranges
@@ -113,27 +114,36 @@ fn draw_layer_single_annotation(
 
 	let mut min = usize::MAX;
 	let mut max = 0;
+	let use_carets = ascii && bottom;
 	let left = if !is_inline {
 		for (i, start) in starts.iter().enumerate() {
 			let first = i == 0;
 			let last = i == starts.len() - 1;
 			min = min.min(*start);
 			max = max.max(*start);
-			let c = if annotation.left && !annotation.right.is_empty() {
+			let c = if use_carets {
+				'^'
+			} else if annotation.left && !annotation.right.is_empty() {
 				bc!(rbl)
+					.mirror_vertical_if(bottom)
+					.char_round()
 			} else if annotation.left && last {
 				bc!(bl)
+					.mirror_vertical_if(bottom)
+					.char_round()
 			} else if !annotation.right.is_empty() && first {
 				bc!(rb)
+					.mirror_vertical_if(bottom)
+					.char_round()
 			} else {
 				assert!(
 					annotation.left || !annotation.right.is_empty(),
 					"no right or left text: {annotation:?}"
 				);
 				bc!(rbl)
-			}
-			.mirror_vertical_if(bottom)
-			.char_round();
+					.mirror_vertical_if(bottom)
+					.char_round()
+			};
 			layer.splice(
 				char_to_display(*start)..=char_to_display(*start),
 				Some(AnnotatedRope::fragment(
@@ -175,9 +185,29 @@ fn draw_layer_single_annotation(
 		layer.extend([Text::fragment(" ", Default::default())]);
 		let lines = right.split('\n');
 		layer.append(lines[0].clone());
+		let label_indent = max_range_display + LABEL_PADDING + 2;
+		let bar_pos = char_to_display(max);
+		let show_cont_bar = !bottom && bar_pos > 0 && bar_pos < label_indent;
 		for right in lines.iter().skip(1) {
-			let mut fmtlayer =
-				AnnotatedRope::fragment(" ".repeat(max_range_display), Formatting::default());
+			let mut fmtlayer = AnnotatedRope::new();
+			if show_cont_bar {
+				fmtlayer.extend([
+					AnnotatedRope::fragment(" ".repeat(bar_pos), Formatting::default()),
+					AnnotatedRope::fragment(
+						bc!(tb).char_round().to_string(),
+						annotation.formatting.clone(),
+					),
+					AnnotatedRope::fragment(
+						" ".repeat(label_indent - bar_pos - 1),
+						Formatting::default(),
+					),
+				]);
+			} else {
+				fmtlayer.extend([AnnotatedRope::fragment(
+					" ".repeat(label_indent),
+					Formatting::default(),
+				)]);
+			}
 			fmtlayer.append(right.clone());
 			extralayers.push((None, fmtlayer));
 		}
@@ -203,6 +233,7 @@ pub(crate) fn generate_range_annotations(
 	char_to_display_fixup: &BTreeMap<usize, isize>,
 	hide_ranges_for: &HashSet<AnnotationId>,
 	bottom: bool,
+	ascii: bool,
 ) -> Vec<(Option<AnnotationId>, Text)> {
 	if annotations.is_empty() {
 		return Vec::new();
@@ -304,7 +335,14 @@ pub(crate) fn generate_range_annotations(
 				let is_inline_right = inline_right == Some(annotation.id);
 				for (i, range) in annotation.ranges.ranges().enumerate() {
 					let first_range = i == 0;
-					let data = if range.start == range.end {
+					let use_carets = ascii && bottom;
+					let data = if use_carets {
+						let len = char_to_display(range.end) - char_to_display(range.start) + 1;
+						if len > 1 {
+							useless = false;
+						}
+						vec!['^'; len]
+					} else if range.start == range.end {
 						vec![if is_inline_right { bc!(rb) } else { bc!(tb) }
 							.mirror_vertical_if(bottom)
 							.char_round()]
@@ -434,6 +472,7 @@ pub(crate) fn generate_range_annotations(
 			max_range_display,
 			&mut extralayers,
 			true,
+			ascii,
 		);
 		assert!(
 			extralayers.is_empty(),
@@ -470,10 +509,16 @@ pub(crate) fn generate_range_annotations(
 				max_range_display,
 				&mut extralayers,
 				false,
+				ascii,
 			);
 
 			extralayers.insert(0, (left, fmtlayer));
-			// layers.extend(extralayers);
+			// For above-annotations (!bottom), the caller reverses the output.
+			// Reverse extralayers so continuation lines appear after the main
+			// label line in the final display order.
+			if !bottom {
+				extralayers.reverse();
+			}
 			layers.push(extralayers);
 		}
 		// Cross lines for earlier displayed annotations
