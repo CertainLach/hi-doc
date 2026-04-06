@@ -208,7 +208,13 @@ impl<M: Clone> AnnotatedRope<M> {
 		while let Some(pos) = v.index_of(char) {
 			let (left, right) = v.split_at(pos);
 			out.push(left);
-			v = right;
+			if right.len() > 1 {
+				let (_, rest) = right.split_at(1);
+				v = rest;
+			} else {
+				v = Self::new();
+				break;
+			}
 		}
 		out.push(v);
 		out
