@@ -9,9 +9,10 @@ repository.workspace = true
 [dependencies]
 unicode-box-drawing.workspace = true
 
+hi_doc-random_color.workspace = true
+
 smallvec.workspace = true
 range-map.workspace = true
-random_color.workspace = true
 rand.workspace = true
 num-traits.workspace = true
 tree-sitter-highlight = { workspace = true, optional = true }

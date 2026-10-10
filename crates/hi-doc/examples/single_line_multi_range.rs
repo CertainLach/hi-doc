@@ -1,4 +1,4 @@
-use hi_doc::{source_to_ansi, SnippetBuilder, Text};
+use hi_doc::{SnippetBuilder, Text, source_to_ansi};
 
 fn main() {
 	let mut snippet = SnippetBuilder::new("012345678901234567890");

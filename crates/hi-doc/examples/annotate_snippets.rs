@@ -1,4 +1,4 @@
-use hi_doc::{source_to_ansi, Formatting, SnippetBuilder, Text};
+use hi_doc::{Formatting, SnippetBuilder, Text, source_to_ansi};
 use tree_sitter_highlight::HighlightConfiguration;
 
 fn main() {

@@ -20,10 +20,10 @@ use range_map::RangeSet;
 use unicode_box_drawing::bc;
 
 use crate::{
+	Formatting, Text,
 	annotation::{AnnotationId, AnnotationLocation},
 	anomaly_fixer::apply_fixup,
-	chars::{cross_vertical, BoxCharacterExt, PreserveStyle},
-	Formatting, Text,
+	chars::{BoxCharacterExt, PreserveStyle, cross_vertical},
 };
 
 const LABEL_PADDING: usize = 2;
@@ -124,25 +124,17 @@ fn draw_layer_single_annotation(
 			let c = if use_carets {
 				'^'
 			} else if annotation.left && !annotation.right.is_empty() {
-				bc!(rbl)
-					.mirror_vertical_if(bottom)
-					.char_round()
+				bc!(rbl).mirror_vertical_if(bottom).char_round()
 			} else if annotation.left && last {
-				bc!(bl)
-					.mirror_vertical_if(bottom)
-					.char_round()
+				bc!(bl).mirror_vertical_if(bottom).char_round()
 			} else if !annotation.right.is_empty() && first {
-				bc!(rb)
-					.mirror_vertical_if(bottom)
-					.char_round()
+				bc!(rb).mirror_vertical_if(bottom).char_round()
 			} else {
 				assert!(
 					annotation.left || !annotation.right.is_empty(),
 					"no right or left text: {annotation:?}"
 				);
-				bc!(rbl)
-					.mirror_vertical_if(bottom)
-					.char_round()
+				bc!(rbl).mirror_vertical_if(bottom).char_round()
 			};
 			layer.splice(
 				char_to_display(*start)..=char_to_display(*start),
@@ -343,19 +335,23 @@ pub(crate) fn generate_range_annotations(
 						}
 						vec!['^'; len]
 					} else if range.start == range.end {
-						vec![if is_inline_right { bc!(rb) } else { bc!(tb) }
-							.mirror_vertical_if(bottom)
-							.char_round()]
+						vec![
+							if is_inline_right { bc!(rb) } else { bc!(tb) }
+								.mirror_vertical_if(bottom)
+								.char_round(),
+						]
 					} else {
-						let mut out = vec![if is_inline_left {
-							bc!(rbl)
-						} else if is_inline_right {
-							bc!(rb).left_if(!first_range)
-						} else {
-							bc!(trb)
-						}
-						.mirror_vertical_if(bottom)
-						.char_round()];
+						let mut out = vec![
+							if is_inline_left {
+								bc!(rbl)
+							} else if is_inline_right {
+								bc!(rb).left_if(!first_range)
+							} else {
+								bc!(trb)
+							}
+							.mirror_vertical_if(bottom)
+							.char_round(),
+						];
 						out.resize(
 							char_to_display(range.end) - char_to_display(range.start),
 							bc!(rl).char_round(),

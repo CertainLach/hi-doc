@@ -8,11 +8,11 @@ use annotated_string::AnnotatedRope;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 pub use formatting::Text;
-use rand::{rngs::SmallRng, RngExt as _, SeedableRng as _};
-use random_color::{
-	options::{Gamut, Luminosity},
+use hi_doc_random_color::{
 	RandomColor,
+	options::{Gamut, Luminosity},
 };
+use rand::{SeedableRng as _, rngs::SmallRng};
 use range_map::{Range, RangeSet};
 use single_line::LineAnnotation;
 use unicode_box_drawing::bc;
@@ -21,7 +21,7 @@ pub use crate::formatting::Formatting;
 
 use self::{
 	annotation::AnnotationLocation,
-	chars::{cross_horizontal, BoxCharacterExt as _, PreserveStyle},
+	chars::{BoxCharacterExt as _, PreserveStyle, cross_horizontal},
 };
 
 mod annotation;
@@ -829,35 +829,10 @@ pub fn source_to_ansi(source: &Source) -> String {
 }
 
 #[derive(Debug)]
-pub struct FormattingGenerator {
-	rand: SmallRng,
-}
-impl FormattingGenerator {
-	pub fn new(src: &[u8]) -> Self {
-		let mut rng_seed = [0; 8];
-		// let seed = seed.to_value();
-		for chunk in src.chunks(8) {
-			for (s, c) in rng_seed.iter_mut().zip(chunk.iter()) {
-				*s ^= *c;
-			}
-		}
-
-		Self {
-			rand: SmallRng::seed_from_u64(u64::from_be_bytes(rng_seed)),
-		}
-	}
-	fn next(&mut self) -> RandomColor {
-		let mut color = RandomColor::new();
-		color.seed(self.rand.random::<u64>());
-		color.luminosity(Luminosity::Bright);
-		color
-	}
-}
-
-#[derive(Debug)]
 pub struct SnippetBuilder {
 	src: String,
-	generator: FormattingGenerator,
+	rng: SmallRng,
+	random_color: RandomColor,
 	annotations: Vec<Annotation>,
 	highlights_before: Vec<(RangeInclusive<usize>, Formatting)>,
 
@@ -867,9 +842,18 @@ pub struct SnippetBuilder {
 }
 impl SnippetBuilder {
 	pub fn new(src: impl AsRef<str>) -> Self {
+		let mut rng_seed = [0; 8];
+		for chunk in src.as_ref().as_bytes().chunks(8) {
+			for (s, c) in rng_seed.iter_mut().zip(chunk.iter()) {
+				*s ^= *c;
+			}
+		}
+		let rng = SmallRng::seed_from_u64(u64::from_be_bytes(rng_seed));
+
 		Self {
 			src: src.as_ref().to_string(),
-			generator: FormattingGenerator::new(src.as_ref().as_bytes()),
+			random_color: RandomColor::new().luminosity(Luminosity::Bright),
+			rng,
 			annotations: Vec::new(),
 			highlights_before: Vec::new(),
 			file_name: None,
@@ -930,9 +914,12 @@ impl SnippetBuilder {
 		self.highlights_before.extend(highlights);
 	}
 	fn custom(&mut self, custom_color: Gamut, text: Text) -> AnnotationBuilder<'_> {
-		let mut color = self.generator.next();
-		color.hue(custom_color);
-		let formatting = Formatting::rgb(color.to_rgb_array());
+		let color = self
+			.random_color
+			.clone()
+			.hue(custom_color)
+			.random_rgb_array(&mut self.rng);
+		let formatting = Formatting::rgb(color);
 		// FIXME: apply_meta is not implemented
 		// let [r, g, b] = color.luminosity(Luminosity::Light).to_rgb_array();
 		// text.apply_meta(

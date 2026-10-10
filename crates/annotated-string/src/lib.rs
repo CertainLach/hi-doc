@@ -4,7 +4,7 @@ mod annotation;
 mod rope;
 
 pub use annotated_range::AnnotatedRange;
-pub use annotation::{ApplyAnnotation, Annotation};
+pub use annotation::{Annotation, ApplyAnnotation};
 
 #[cfg(feature = "rope")]
 pub use rope::AnnotatedRope;

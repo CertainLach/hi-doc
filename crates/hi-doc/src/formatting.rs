@@ -1,6 +1,6 @@
 use core::fmt;
 
-use annotated_string::{ApplyAnnotation, AnnotatedRope, Annotation};
+use annotated_string::{AnnotatedRope, Annotation, ApplyAnnotation};
 
 pub type Text = AnnotatedRope<Formatting>;
 

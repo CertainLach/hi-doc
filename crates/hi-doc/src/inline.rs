@@ -160,12 +160,6 @@ pub(crate) fn apply_inline_annotations(
 		}
 	}
 	if let Some((formatting, right)) = right {
-		text.extend([
-			Text::fragment(
-				format!("{} ", '🢒'),
-				formatting,
-			),
-			right,
-		]);
+		text.extend([Text::fragment(format!("{} ", '🢒'), formatting), right]);
 	}
 }

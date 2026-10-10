@@ -22,18 +22,10 @@ pub(crate) impl BoxCharacterExt for BoxCharacter {
 		)
 	}
 	fn mirror_vertical_if(self, cond: bool) -> Self {
-		if cond {
-			self.mirror_vertical()
-		} else {
-			self
-		}
+		if cond { self.mirror_vertical() } else { self }
 	}
 	fn left_if(self, cond: bool) -> Self {
-		if cond {
-			self.with_left()
-		} else {
-			self
-		}
+		if cond { self.with_left() } else { self }
 	}
 	fn cross_horizontal(self) -> (PreserveStyle, Self) {
 		let v = self.with_left().with_right();

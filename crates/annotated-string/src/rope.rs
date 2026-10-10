@@ -7,8 +7,8 @@ use std::{
 };
 
 use hi_doc_jumprope::{
-	iter::{Chars as RopeChars, ContentIter, SliceIter, Substrings},
 	JumpRope, JumpRopeBuf,
+	iter::{Chars as RopeChars, ContentIter, SliceIter, Substrings},
 };
 
 use crate::{AnnotatedRange, ApplyAnnotation};

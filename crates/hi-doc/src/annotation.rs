@@ -61,9 +61,15 @@ impl AnnotationLocation {
 		matches!(self, Self::Any | Self::AboveOrInline | Self::BelowOrInline)
 	}
 	pub fn is_above(&self) -> bool {
-		matches!(self, Self::Any | Self::AnyNotInline | Self::Above | Self::AboveOrInline)
+		matches!(
+			self,
+			Self::Any | Self::AnyNotInline | Self::Above | Self::AboveOrInline
+		)
 	}
 	pub fn is_below(&self) -> bool {
-		matches!(self, Self::Any | Self::AnyNotInline | Self::Below | Self::BelowOrInline)
+		matches!(
+			self,
+			Self::Any | Self::AnyNotInline | Self::Below | Self::BelowOrInline
+		)
 	}
 }
