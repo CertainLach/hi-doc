@@ -8,7 +8,7 @@ use annotated_string::AnnotatedRope;
 use annotation::{Annotation, AnnotationId, Opts};
 use anomaly_fixer::{apply_fixup, fixup_byte_to_char, fixup_char_to_display};
 pub use formatting::Text;
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, RngExt as _, SeedableRng as _};
 use random_color::{
 	options::{Gamut, Luminosity},
 	RandomColor,
@@ -21,7 +21,7 @@ pub use crate::formatting::Formatting;
 
 use self::{
 	annotation::AnnotationLocation,
-	chars::{cross_horizontal, BoxCharacterExt, PreserveStyle},
+	chars::{cross_horizontal, BoxCharacterExt as _, PreserveStyle},
 };
 
 mod annotation;
@@ -77,6 +77,7 @@ impl TextLine {
 			ele.splice(0..0, Some(annotations.clone()));
 		}
 	}
+	#[expect(dead_code)]
 	fn len(&self) -> usize {
 		self.line.len()
 	}
@@ -902,7 +903,7 @@ impl SnippetBuilder {
 
 		let mut highlighter = Highlighter::new();
 		let iter = highlighter
-			.highlight(&config, self.src.as_bytes(), None, |_| None)
+			.highlight(&config, self.src.as_bytes(), None, None, |_| None)
 			.expect("highlight");
 
 		let mut highlights = Vec::new();
