@@ -1,7 +1,7 @@
 [package]
 name = "hi-doc"
 description = "Diagnostics formatting library"
-version.workspace = true
+version = "0.4.2"
 edition = "2024"
 license.workspace = true
 repository.workspace = true

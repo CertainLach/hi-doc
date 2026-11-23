@@ -2,7 +2,7 @@
 name = "annotated-string"
 description = "String with ability to annotate (format) its individual fragments"
 edition = "2024"
-version.workspace = true
+version = "0.4.2"
 license.workspace = true
 repository.workspace = true
 

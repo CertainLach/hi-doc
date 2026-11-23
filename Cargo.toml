@@ -1,5 +1,4 @@
 [workspace]
-package.version = "0.4.1"
 package.license = "MIT"
 package.repository = "https://github.com/CertainLach/hi-doc"
 resolver = "3"
@@ -8,7 +7,8 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 unicode-box-drawing = { version = "0.4.1", path = "./crates/unicode-box-drawing" }
-annotated-string = { version = "0.4.1", path = "./crates/annotated-string" }
+annotated-string = { version = "0.4.2", path = "./crates/annotated-string" }
+hi-doc = { version = "0.4.2", path = "./crates/hi-doc" }
 
 hi-doc-jumprope = { version = "2.0.0" }
 hi_doc-random_color = "2.0.0"

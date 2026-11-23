@@ -2,7 +2,7 @@
 name = "unicode-box-drawing"
 description = "Unicode box-drawing characters"
 edition = "2024"
-version.workspace = true
+version = "0.4.1"
 license.workspace = true
 repository.workspace = true
 

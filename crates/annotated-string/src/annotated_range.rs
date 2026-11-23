@@ -138,12 +138,13 @@ impl<D: Clone> AnnotatedRange<D> {
 		for (key, _) in self.data.range(MutableOffset::new(pos)..) {
 			key.set(key.get() - size);
 		}
-		if let Some(meta) = meta {
+		self.len -= size;
+		if let Some(meta) = meta
+			&& pos < self.len
+		{
 			// If there is no range starting right after deleted - insert start of meta from what was deleted.
 			self.data.entry(MutableOffset::new(pos)).or_insert(meta);
 		}
-
-		self.len -= size;
 	}
 	pub fn concat(&mut self, other: Self) {
 		if other.is_empty() {
@@ -294,4 +295,16 @@ fn assoc_smoke() {
 	data.insert(2, AnnotatedRange::with_size(1, 'c'));
 	data.insert(0, AnnotatedRange::with_size(3, 'b'));
 	data.remove(1..3);
+}
+
+#[test]
+fn remove_tail_leaves_no_empty_range() {
+	let mut data = <AnnotatedRange<char>>::new();
+	data.append(2, 'a');
+	data.append(2, 'b');
+	data.remove(1..4);
+	assert_eq!(data.iter().collect::<Vec<_>>(), [(&'a', 0..1)]);
+
+	data.remove(0..1);
+	assert_eq!(data.iter().count(), 0);
 }
